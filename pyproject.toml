@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jev-mobile"
+version = "0.1.0"
+description = "Jev-based Android UI testing with MCP tools"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.9,<2"]
+
+[project.scripts]
+jev-mobile = "jev_mobile.__main__:main"
+jev-mobile-mcp = "jev_mobile.mcp_server:main"
+jev-mobile-local-runner = "jev_mobile.local_server:main"
+
+[tool.setuptools.packages.find]
+include = ["jev_mobile*"]

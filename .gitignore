@@ -1,0 +1,11 @@
+# Local credentials and runner artifacts
+.env
+.env.*
+!.env.example
+runner-output/
+__pycache__/
+*.pyc
+dashboard/node_modules/
+dashboard/.next/
+dashboard/tsconfig.tsbuildinfo
+.DS_Store
