@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import re
+import uuid
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -58,6 +59,13 @@ class AndroidDevice:
     def __init__(self,serial:str,adb:str='adb'):
         self.serial=serial
         self.adb=adb
+        self._screen_size:tuple[int,int]|None=None
+        self._screen_size_read_at=0.0
+        self.screen_size_cache_seconds=2.0
+        self.last_observation_timings:dict[str,int]={}
+        self.last_wait_timings:dict[str,int]={}
+        self.last_content_wait_timings:dict[str,int]={}
+        self.last_size_lookup_ms=0
 
     @staticmethod
     def connected(adb:str='adb') -> list[str]:
@@ -159,25 +167,46 @@ class AndroidDevice:
         return match.group(1) if match else ''
 
     def size(self) -> tuple[int,int]:
+        if self._screen_size is not None and time.monotonic()-self._screen_size_read_at<self.screen_size_cache_seconds:
+            return self._screen_size
         data=self.command('shell','wm','size').stdout.decode(errors='replace')
         m=re.search(r'(?:Override|Physical) size: (\d+)x(\d+)',data)
-        return (int(m.group(1)),int(m.group(2))) if m else (1080,1920)
+        self._screen_size=(int(m.group(1)),int(m.group(2))) if m else (1080,1920)
+        self._screen_size_read_at=time.monotonic()
+        return self._screen_size
 
     def observe(self,retries:int=2) -> Screen:
         last=None
+        total_started=time.perf_counter()
+        timings={'uiautomator_dump_ms':0,'xml_transfer_ms':0,'parse_ms':0,'retries':0}
         for _ in range(retries):
             try:
+                started=time.perf_counter()
                 self.command('shell','uiautomator','dump','/sdcard/window.xml',timeout=18)
+                timings['uiautomator_dump_ms']+=round((time.perf_counter()-started)*1000)
+                started=time.perf_counter()
                 raw=self.command('exec-out','cat','/sdcard/window.xml',timeout=12).stdout.decode('utf-8',errors='replace')
+                timings['xml_transfer_ms']+=round((time.perf_counter()-started)*1000)
+                started=time.perf_counter()
                 root=ET.fromstring(raw)
-                return self._parse(root,raw)
+                screen=self._parse(root,raw)
+                timings['parse_ms']+=round((time.perf_counter()-started)*1000)
+                timings['screen_size_lookup_ms']=self.last_size_lookup_ms
+                timings['total_ms']=round((time.perf_counter()-total_started)*1000)
+                self.last_observation_timings=timings
+                return screen
             except (ET.ParseError,DeviceError,subprocess.TimeoutExpired) as exc:
                 last=exc
+                timings['retries']+=1
                 time.sleep(.3)
+        timings['total_ms']=round((time.perf_counter()-total_started)*1000)
+        self.last_observation_timings=timings
         raise DeviceError(f'Could not observe Android hierarchy: {last}')
 
     def _parse(self,root:ET.Element,raw:str) -> Screen:
+        size_started=time.perf_counter()
         width,height=self.size()
+        self.last_size_lookup_ms=round((time.perf_counter()-size_started)*1000)
         elements=[]
         texts=[]
         spatial_labels=[]
@@ -251,6 +280,33 @@ class AndroidDevice:
             raise DeviceError('Screenshot was not a PNG.')
         path.write_bytes(data)
 
+    @contextmanager
+    def screen_recording(self, output:Path):
+        """Capture a bounded, low-bitrate Android screen recording for one runner segment."""
+        output.mkdir(parents=True, exist_ok=True)
+        name=f"screen-recording-{time.time_ns()}.mp4"
+        remote=f"/sdcard/Movies/jev-{uuid.uuid4().hex}.mp4"
+        pid=None
+        try:
+            self.command('shell','mkdir','-p','/sdcard/Movies',timeout=10)
+            started=self.command('shell',f'screenrecord --time-limit 180 --bit-rate 750000 {remote} >/dev/null 2>&1 & echo $!',timeout=10,check=False)
+            match=re.search(rb'\b(\d+)\b',started.stdout)
+            if started.returncode==0 and match:pid=match.group(1).decode()
+            yield
+        finally:
+            if pid:
+                try:
+                    self.command('shell','kill','-INT',pid,timeout=10,check=False)
+                    time.sleep(.8)
+                    destination=output/name
+                    pulled=self.command('pull',remote,str(destination),timeout=25,check=False)
+                    if pulled.returncode or not destination.is_file() or destination.stat().st_size==0:
+                        destination.unlink(missing_ok=True)
+                except (DeviceError,subprocess.TimeoutExpired,OSError):
+                    (output/name).unlink(missing_ok=True)
+                finally:
+                    self.command('shell','rm','-f',remote,timeout=10,check=False)
+
     def tap(self,element:Element) -> None:
         x,y=element.center
         self.command('shell','input','tap',str(x),str(y))
@@ -314,24 +370,42 @@ class AndroidDevice:
 
     def wait_for_change(self,previous:Screen,timeout:float=4) -> Screen:
         deadline=time.monotonic()+timeout
+        started=time.perf_counter()
+        count=0
+        observe_ms=0
         while time.monotonic()<deadline:
             time.sleep(.25)
             next_screen=self.observe()
+            count+=1
+            observe_ms+=self.last_observation_timings.get('total_ms',0)
             if next_screen.fingerprint!=previous.fingerprint:
+                self.last_wait_timings={'polls':count,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
                 return next_screen
-        return self.observe()
+        final=self.observe()
+        count+=1
+        observe_ms+=self.last_observation_timings.get('total_ms',0)
+        self.last_wait_timings={'polls':count,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
+        return final
 
     def wait_for_content(self,timeout:float=20) -> Screen:
         """Wait for content and a settled accessibility hierarchy after launch."""
+        started=time.perf_counter()
         deadline=time.monotonic()+max(0,timeout)
         last=self.observe()
+        observations=1
+        observe_ms=self.last_observation_timings.get('total_ms',0)
         stable=0
         while time.monotonic()<deadline:
             time.sleep(.35)
             current=self.observe()
+            observations+=1
+            observe_ms+=self.last_observation_timings.get('total_ms',0)
             if current.fingerprint==last.fingerprint and (current.text.strip() or current.elements):
                 stable+=1
-                if stable>=1:return current
+                if stable>=1:
+                    self.last_content_wait_timings={'observations':observations,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
+                    return current
             else:stable=0
             last=current
+        self.last_content_wait_timings={'observations':observations,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
         return last

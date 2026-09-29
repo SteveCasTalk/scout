@@ -1,8 +1,8 @@
 import { z } from 'zod';
-export const caseInput = z.object({ workspace_id: z.string().min(1).max(80), project: z.string().trim().min(1).max(100).default('General'), app_id: z.string().trim().max(240).default(''), title: z.string().trim().min(1).max(160), platform: z.enum(['Android', 'iOS']), suite: z.string().trim().min(1).max(80), goal: z.string().trim().min(1).max(4000), preconditions: z.string().max(4000), steps: z.string().trim().min(1).max(8000), expected: z.string().trim().min(1).max(4000), assertion_text: z.string().trim().max(240).default('') });
+export const caseInput = z.object({ workspace_id: z.string().min(1).max(80), project: z.string().trim().min(1).max(100).default('General'), ticket_key: z.string().trim().max(40).default(''), app_id: z.string().trim().max(240).default(''), title: z.string().trim().min(1).max(160), platform: z.enum(['Android', 'iOS']), suite: z.string().trim().min(1).max(80), goal: z.string().trim().min(1).max(4000), preconditions: z.string().max(4000), steps: z.string().trim().min(1).max(8000), expected: z.string().trim().min(1).max(4000), assertion_text: z.string().trim().max(240).default('') });
 export const statuses = ['Passed', 'Failed', 'Inconclusive', 'Execution error'] as const;
 export const jevAudit = z.object({
-    request: z.object({ model: z.string(), state: z.unknown(), questions: z.record(z.string(), z.object({ type: z.string(), criteria: z.record(z.string(), z.unknown()), instructions: z.unknown() })) }),
+    request: z.object({ model: z.string(), state: z.unknown().optional(), questions: z.record(z.string(), z.object({ type: z.string(), criteria: z.record(z.string(), z.unknown()), instructions: z.unknown().optional() })) }),
     response: z.object({ model: z.string().nullable().optional(), answers: z.record(z.string(), z.object({ choice: z.string(), confidence: z.number().min(0).max(1), probabilities: z.record(z.string(), z.number().min(0).max(1)) })), usage: z.unknown().optional() }),
     latency_ms: z.number().int().nonnegative(),
 });

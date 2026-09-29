@@ -9,7 +9,7 @@ This workspace adapts the [Jev Ultrafast](https://github.com/browser-use/jev-ult
 - MCP server: local tools for device discovery, Jev test execution, run history, and result inspection; see [MCP setup](docs/mcp.md).
 - `.env`: local, Git-ignored owner-only UAT credentials and model keys. Copy `.env.example` if needed, then fill values locally; see [test account setup](docs/test-account.md). **Do not send credentials in chat or put them in test cases.**
 
-The runner currently targets Android. There is no iOS driver. Jev chooses operations and targets; ADB provides device observations, actions, and screenshots. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. Video recording by the runner is not implemented. The dashboard can attach recordings made through other approved tools.
+The runner currently targets Android. There is no iOS driver. Jev chooses operations and targets; ADB provides device observations, actions, and screenshots. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. The runner also captures low-bitrate Android screen-recording clips for each execution segment; Jev and dashboard imports attach the MP4 clips to the test run when they are available.
 
 ## AI Avatar UAT
 
@@ -17,7 +17,7 @@ The installed package is `com.wallet.walkthedog.uat`. Version 3.34.0 blocks the 
 
 ## Run from the dashboard
 
-Keep the dashboard running, then start the local device bridge from a second terminal with python3 -m jev_mobile.local_server. The Test cases table shows **Run Jev** for Android cases when the bridge is available; runs and safe evidence are saved into the dashboard automatically. See [dashboard runner setup](dashboard/README.md#run-jev-from-the-dashboard).
+Prompt-driven MCP runs start the local dashboard and device bridge on demand when the dashboard dependencies are installed. The returned dashboard link uses the active local port, so it remains openable when the default port is already occupied. For manually launched dashboard runs, start the dashboard with `cd dashboard && npm run dev` and the local device bridge with `python3 -m jev_mobile.local_server`; runs and safe evidence are saved automatically. See [dashboard runner setup](dashboard/README.md#run-jev-from-the-dashboard).
 
 ## Run a case
 
@@ -32,7 +32,7 @@ python3 -m jev_mobile --case /absolute/path/to/jev-case.json --package com.walle
 
 By default, each run temporarily disables Android autofill and credential providers, which prevents Samsung Pass and Google Password Manager save-password dialogs from blocking Jev. It also temporarily grants and silences Android 13+ notification permission so its runtime prompt does not block the test. The runner restores the device's original settings and notification permission when the run ends, including after a test failure. Use `--allow-device-prompts` to keep autofill and credential providers enabled for a CLI run; notification prompts remain suppressed. The runner still dismisses recognized prompts if one appears despite the device setting.
 
-The runner writes `result.json`, `trace.json`, `jev-output.json`, and safe screenshots into a timestamped, Git-ignored `runner-output/` directory. Each result includes a separate verification phase with its method, expected visible text, observed screen text, and pass/fail/inconclusive status. `jev-output.json` contains the credential-redacted request questions and Jev answer payload for each model call, including option probabilities, confidence, model, and latency. Import `result.json` from **Test runs → Import Jev result**, then expand a **Jev decision** in the action timeline to see the breakdown or the request/response JSON. Attach `jev-output.json` and screenshots as evidence when needed. The test revision must still match the exported case.
+The runner writes `result.json`, `trace.json`, `jev-output.json`, and safe screenshots into a timestamped, Git-ignored `runner-output/` directory. Each result includes a separate verification phase with its method, expected visible text, observed screen text, and pass/fail/inconclusive status. `jev-output.json` contains the credential-redacted request questions and Jev answer payload for each model call, including option probabilities, confidence, model, and latency. Import `result.json` from **Test cases → Import Jev result**, then expand a **Jev decision** in the action timeline to see the breakdown or the request/response JSON. Attach `jev-output.json` and screenshots as evidence when needed. The test revision must still match the exported case.
 
 `Passed` requires the exact visible text; without an assertion, Jev's `DONE` yields `Inconclusive`. Device/model errors yield `Execution error`. The runner will not tap controls whose labels suggest purchases, transfers, subscription, or account deletion. Legal and privacy consent gates stop as `Inconclusive` before agreement or submission; the user must explicitly authorize that step. Checkable state is included in screen fingerprints, and repeating an action without an observable screen change stops the run instead of toggling the control repeatedly.
 

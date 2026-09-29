@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import re
 import threading
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .agent import Agent, RunConfig
 from .config import ROOT, load_local_env
@@ -38,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        if origin in ALLOWED_ORIGINS:
+        if _allowed_origin(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -51,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _browser_request_allowed(self) -> bool:
-        return self.headers.get("Origin") in ALLOWED_ORIGINS and self.headers.get("Host", "").split(":", 1)[0] in {"localhost", "127.0.0.1"}
+        return _allowed_origin(self.headers.get("Origin", "")) and self.headers.get("Host", "").split(":", 1)[0] in {"localhost", "127.0.0.1"}
 
     def do_OPTIONS(self) -> None:
         if not self._browser_request_allowed():
@@ -76,9 +76,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/runs":
             root = ROOT / "runner-output"
+            cursor = parse_qs(parsed.query).get("before", [""])[0]
+            if cursor and not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", cursor):
+                self._json(400, {"error": "Invalid run cursor."})
+                return
             runs = []
             if root.is_dir():
-                for folder in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name, reverse=True):
+                folders = sorted((path for path in root.iterdir() if path.is_dir() and (not cursor or path.name < cursor)), key=lambda path: path.name, reverse=True)
+                for folder in folders:
                     result_path = folder / "result.json"
                     if not result_path.is_file():
                         continue
@@ -88,15 +93,17 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     if not isinstance(result, dict) or not str(result.get("case_id", "")).startswith("prompt-"):
                         continue
-                    artifacts = sorted(path.name for path in folder.iterdir() if path.is_file() and (path.suffix == ".png" or path.name in {"result.json", "trace.json", "jev-output.json", "run-verification.json"}))
+                    artifacts = sorted(path.name for path in folder.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json", "run-verification.json"}))
                     runs.append({"run_id": folder.name, "result": result, "artifacts": artifacts})
-            self._json(200, {"runs": runs[:50]})
+            page = runs[:50]
+            next_cursor = page[-1]["run_id"] if len(runs) > 50 else None
+            self._json(200, {"runs": page, "next_cursor": next_cursor})
             return
         match = re.fullmatch(r"/runs/([A-Za-z0-9_-]{1,80})/artifacts/([^/]+)", parsed.path)
         if match:
             run_id, encoded_name = match.groups()
             name = unquote(encoded_name)
-            if name not in {"result.json", "trace.json", "jev-output.json", "run-verification.json"} and not re.fullmatch(r"\d{3}\.png", name):
+            if name not in {"result.json", "trace.json", "jev-output.json", "run-verification.json"} and not re.fullmatch(r"\d{3}\.png|screen-recording-\d+\.mp4", name):
                 self._json(400, {"error": "Unsupported artifact."})
                 return
             root = (ROOT / "runner-output").resolve()
@@ -105,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
             if folder.parent != root or artifact.parent != folder or not artifact.is_file():
                 self._json(404, {"error": "Artifact not found."})
                 return
-            content_type = "image/png" if name.endswith(".png") else "application/json"
+            content_type = "image/png" if name.endswith(".png") else "video/mp4" if name.endswith(".mp4") else "application/json"
             try:
                 data = artifact.read_bytes()
                 self._headers(200, content_type, len(data))
@@ -171,9 +178,9 @@ class Handler(BaseHTTPRequestHandler):
             output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             assertion = str(case.get("assertion_text", "")).strip()
             device = AndroidDevice(device_serial, adb)
-            with device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
+            with device.screen_recording(output), device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
                 result = Agent(RunConfig(package, device_serial, case, output, adb, max_steps, 180, assertion)).run()
-            artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix == ".png" or path.name in {"result.json", "trace.json", "jev-output.json"}))
+            artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json"}))
             self._json(200, {"run_id": output.name, "result": result, "artifacts": artifacts})
         except Exception as exc:
             self._json(500, {"error": f"Jev runner failed: {type(exc).__name__}: {str(exc)[:300]}"})
@@ -191,6 +198,25 @@ def main() -> None:
         pass
     finally:
         server.server_close()
+
+
+def _allowed_origin(origin: str) -> bool:
+    if origin in ALLOWED_ORIGINS:
+        return True
+    try:
+        parsed = urlsplit(origin)
+        port = parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1"}:
+        return False
+    if port is not None and 5173 <= port <= 5189:
+        return True
+    try:
+        configured = urlsplit(os.getenv("JEV_DASHBOARD_URL", ""))
+    except ValueError:
+        return False
+    return bool(configured.netloc and parsed.netloc == configured.netloc and configured.hostname in {"localhost", "127.0.0.1"})
 
 
 if __name__ == "__main__":

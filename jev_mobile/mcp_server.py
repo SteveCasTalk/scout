@@ -20,7 +20,9 @@ from mcp.server.fastmcp.utilities.types import Image
 
 from .agent import Agent, RunConfig
 from .config import ROOT, load_local_env
+from .dashboard_runtime import ensure_dashboard
 from .device import AndroidDevice
+from .validation import validate_prompt_steps
 
 
 mcp = FastMCP("Jev Mobile")
@@ -46,7 +48,7 @@ def _expire_pending_runs() -> None:
 
 def _drive_mcp_agent(agent: Agent, text: str | None = None) -> dict[str, Any]:
     device = agent.device
-    with device.suppress_credential_prompts(), device.suppress_notification_prompt(agent.config.package):
+    with device.screen_recording(agent.output), device.suppress_credential_prompts(), device.suppress_notification_prompt(agent.config.package):
         return agent.run() if text is None else agent.resume_text(text)
 
 
@@ -98,13 +100,16 @@ def _mcp_agent_response(
         "jev_audit_file": str(agent.output / "jev-output.json"),
     }
     if prompt_run:
+        dashboard_url, dashboard_error = ensure_dashboard()
         response.update({
             "project": project,
             "case_source": "user prompt",
             "case_saved": False,
             "consent_authorized": allow_consent,
-            "dashboard_url": f"{os.getenv('JEV_DASHBOARD_URL', 'http://localhost:5173').rstrip('/')}?project={quote(project)}&syncRun={quote(run_id)}",
+            "dashboard_url": f"{dashboard_url}?project={quote(project)}&syncRun={quote(run_id)}",
         })
+        if dashboard_error:
+            response["dashboard_start_error"] = dashboard_error
     return response
 
 
@@ -120,7 +125,7 @@ def _run_directory(run_id: str) -> Path:
 
 def _evidence_files(directory: Path) -> list[Path]:
     return sorted(
-        (path for path in directory.iterdir() if path.is_file() and (path.name in EVIDENCE_FILES or re.fullmatch(r"\d{3}\.png", path.name))),
+        (path for path in directory.iterdir() if path.is_file() and (path.name in EVIDENCE_FILES or re.fullmatch(r"\d{3}\.png", path.name) or re.fullmatch(r"screen-recording-\d+\.mp4", path.name))),
         key=lambda path: path.name,
     )
 
@@ -244,7 +249,7 @@ def run_android_test_from_prompt(
 ) -> dict[str, Any]:
     """Run an Android test from the user's prompt. If Jev needs ordinary text, this returns `awaiting_input`; the assistant must choose only text requested by the user and call `enter_text` with the returned run_id.
 
-    The assistant should translate the user's prompt into a concise goal, ordered steps, and expected outcome.
+    The assistant should translate the user's prompt into a concise goal, ordered steps, and expected outcome. For a read-only check of the current screen, empty steps are allowed when `assertion_text` is supplied; that skips navigation decisions.
     For projects other than General or AI Avatar, provide the app package ID or first use search_android_packages.
     Credentials may be supplied for this run or loaded from local .env. They are used only by the local device runner,
     redacted from saved outputs, and are not included in Jev model requests. Tool arguments are still visible to the MCP
@@ -259,8 +264,8 @@ def run_android_test_from_prompt(
     assertion_text = assertion_text.strip()
     if not goal or len(goal) > 4000:
         raise ValueError("goal must be 1–4000 characters.")
-    if not steps or len(steps) > 8000:
-        raise ValueError("steps must be 1–8000 characters.")
+    if len(steps) > 8000:
+        raise ValueError("steps must be at most 8000 characters.")
     if not expected or len(expected) > 4000:
         raise ValueError("expected must be 1–4000 characters.")
     if not title or len(title) > 160:
@@ -277,6 +282,7 @@ def run_android_test_from_prompt(
         raise ValueError("package must be a valid Android application ID.")
     if len(assertion_text) > 240:
         raise ValueError("assertion_text must be at most 240 characters.")
+    validate_prompt_steps(goal, steps, assertion_text)
     if len(test_email) > 254 or len(test_password) > 200:
         raise ValueError("test_email or test_password exceeds the supported length.")
     if test_email and "@" not in test_email:
@@ -389,7 +395,8 @@ def get_run_result(run_id: str) -> dict[str, Any]:
     trace = json.loads((directory / "trace.json").read_text(encoding="utf-8")) if (directory / "trace.json").is_file() else []
     audit = json.loads((directory / "jev-output.json").read_text(encoding="utf-8")) if (directory / "jev-output.json").is_file() else {}
     screenshots = sorted(path.name for path in directory.glob("*.png") if path.is_file())
-    return {"result": result, "trace": trace, "jev_audit": audit, "screenshots": screenshots}
+    recordings = sorted(path.name for path in directory.glob("screen-recording-*.mp4") if path.is_file())
+    return {"result": result, "trace": trace, "jev_audit": audit, "screenshots": screenshots, "recordings": recordings}
 
 
 @mcp.tool()

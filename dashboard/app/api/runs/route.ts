@@ -15,7 +15,7 @@ export async function POST(request: Request) { try {
         const previous = await db.prepare('SELECT id FROM runs WHERE owner=? AND external_run_id=?').bind(owner, r.externalRunId).first<{id:string}>();
         if (previous) return Response.json({ id: previous.id, duplicate: true }, { status: 200 });
     }
-    const c = await db.prepare('SELECT id,workspace_id,project,app_id,title,platform,suite,goal,preconditions,steps,expected,assertion_text,revision,updated FROM test_cases WHERE id=? AND owner=?').bind(r.caseId, owner).first<{workspace_id:string; revision:number}>();
+    const c = await db.prepare('SELECT id,workspace_id,project,ticket_key,app_id,title,platform,suite,goal,preconditions,steps,expected,assertion_text,revision,updated FROM test_cases WHERE id=? AND owner=?').bind(r.caseId, owner).first<{workspace_id:string; revision:number}>();
     if (!c)
         throw new HttpError(404, 'Test case not found.');
     if (c.revision !== r.revision)

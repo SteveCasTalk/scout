@@ -460,4 +460,80 @@ class RunnerSafetyTests(unittest.TestCase):
   screen=device._parse(ET.fromstring(xml),xml)
   self.assertFalse(any(e.label=='Profile' for e in screen.elements))
 
+ def test_navigation_cycle_detector_recognizes_repeated_two_and_three_screen_loops(self):
+  self.assertIsNone(Agent.screen_cycle(['edit','profile','edit','profile']))
+  self.assertEqual(Agent.screen_cycle(['feed','profile','menu','profile','menu','profile','menu']),2)
+  self.assertIsNone(Agent.screen_cycle(['feed','search','results','feed','search','results']))
+  self.assertEqual(Agent.screen_cycle(['feed','search','results']*3),3)
+  self.assertIsNone(Agent.screen_cycle(['feed','profile','menu','search']))
+
+ def test_runner_stops_on_repeated_navigation_cycle_before_another_model_call(self):
+  from jev_mobile.device import Element,Screen
+  target=Element('1','button','More options','','Button','',(0,0,20,20),('TAP',),False)
+  screens=[Screen('',[target],label,label,1080,1920) for label in ('feed','profile','menu')]
+  fake=Mock();fake.wait_for_content.return_value=screens[0];fake.observe.return_value=screens[0]
+  fake.wait_for_change.side_effect=[screens[1],screens[2],screens[1],screens[2],screens[1],screens[2]]
+  fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
+  decision={'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}}
+  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=decision) as chooser:
+   result=Agent(RunConfig('app','fake',{'goal':'Open More options'},Path(directory),max_steps=20)).run()
+  self.assertEqual(result['status'],'Inconclusive')
+  self.assertIn('2-screen navigation cycle',result['notes'])
+  self.assertEqual(chooser.call_count,5)
+
+ def test_runner_allows_a_requested_return_to_an_earlier_screen(self):
+  from jev_mobile.device import Element,Screen
+  back=Element('1','button','Back','','Button','',(0,0,20,20),('TAP',),False)
+  edit=Element('1','button','Edit','','Button','',(0,0,20,20),('TAP',),False)
+  before=Screen('',[back],'Username · Back','edit',1080,1920)
+  profile=Screen('',[edit],'Profile · Username · Edit','profile',1080,1920)
+  returned=Screen('',[back],'Prompt · Name · Username','edit',1080,1920)
+  fake=Mock();fake.wait_for_content.return_value=before;fake.observe.return_value=returned
+  fake.wait_for_change.side_effect=[profile,returned]
+  fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
+  decisions=[
+   {'operation':'BACK','target':None,'confidence':.9,'model':'test','latency_ms':1,'jev':{}},
+   {'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}},
+   {'operation':'DONE','target':None,'confidence':.9,'model':'test','latency_ms':1,'jev':{}},
+  ]
+  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions) as chooser:
+   result=Agent(RunConfig('app','fake',{'goal':'Return to the edit prompt through Profile'},Path(directory),expected_text='Username')).run()
+  self.assertEqual(result['status'],'Passed')
+  self.assertEqual(chooser.call_count,3)
+
+ def test_read_only_visible_assertion_skips_model_round_trip(self):
+  from jev_mobile.device import Screen
+  before=Screen('',[],'Username visible on profile','profile',1080,1920)
+  fake=Mock();fake.wait_for_content.return_value=before;fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
+  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose') as chooser:
+   result=Agent(RunConfig('app','fake',{'goal':'Verify the profile username is visible','steps':''},Path(directory),expected_text='Username visible')).run()
+  self.assertEqual(result['status'],'Passed')
+  chooser.assert_not_called()
+  self.assertTrue(any(entry.get('timings_ms',{}).get('verification_only') for entry in result['steps']))
+  json.dumps(result)
+
+ def test_mcp_allows_step_free_read_only_verification_only_with_exact_assertion(self):
+  from jev_mobile.validation import validate_prompt_steps
+  validate_prompt_steps('Verify the username is visible','', 'Username')
+  with self.assertRaisesRegex(ValueError,'read-only verification goal'):
+   validate_prompt_steps('Search for a username','', 'Username')
+  with self.assertRaisesRegex(ValueError,'read-only verification goal'):
+   validate_prompt_steps('Verify the username is visible','', '')
+
+ def test_screen_size_is_cached_briefly_and_refreshed_after_ttl(self):
+  from subprocess import CompletedProcess
+  device=AndroidDevice('fake')
+  device.command=Mock(return_value=CompletedProcess([],0,b'Physical size: 1080x2340\n',b''))
+  with patch('jev_mobile.device.time.monotonic',side_effect=[0.0,.5,3.0,3.0]):
+   self.assertEqual(device.size(),(1080,2340))
+   self.assertEqual(device.size(),(1080,2340))
+   self.assertEqual(device.size(),(1080,2340))
+  self.assertEqual(device.command.call_count,2)
+
 if __name__=='__main__':unittest.main()
