@@ -78,7 +78,7 @@ class RunnerSafetyTests(unittest.TestCase):
   save=next(element for element in screen.elements if element.label=='Save')
   self.assertEqual(save.operations,())
 
- def test_twomi_birthday_base_step_confirms_one_selected_value_then_saves_once(self):
+ def test_generic_date_gate_confirms_one_selected_value_then_submits_once(self):
   from jev_mobile.device import Element,Screen
   birthday=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   confirm=Element('2','button','Confirm','','Button','',(10,70,200,120),('TAP',),False)
@@ -88,19 +88,19 @@ class RunnerSafetyTests(unittest.TestCase):
   picker=Screen('',[confirm,selected],'Select your birthday · Saturday, January 1, 2000 · Confirm','picker',1080,2340)
   form=Screen('',[save],'Your Birthday · 2000/01/01 · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','form',1080,2340)
   feed=Screen('',[],'Swipe up to select your companion','feed',1080,2340)
-  agent=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=True))
+  agent=Agent(RunConfig('example.other.app','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=True))
   agent.device=Mock();agent.device.wait_for_change.side_effect=[picker,form,feed]
   agent.screenshot=Mock(return_value='evidence.png')
-  result=agent._base_birthday_step(before)
+  result=agent._base_date_gate_step(before)
   self.assertIs(result,feed)
   self.assertEqual(agent.device.tap.call_args_list,[unittest.mock.call(birthday),unittest.mock.call(confirm),unittest.mock.call(save)])
   self.assertEqual([item['base_step'] for item in agent.history],[
-   'Twomi birthday: open date picker',
-   'Twomi birthday: confirm preselected date 2000-01-01',
-   'Twomi birthday: save confirmed date 2000-01-01',
+   'Date gate: open date picker',
+   'Date gate: confirm preselected date 2000-01-01',
+   'Date gate: submit confirmed date 2000-01-01',
   ])
 
- def test_twomi_birthday_base_step_runs_before_and_without_jev_decisions(self):
+ def test_generic_date_gate_runs_before_jev_decisions(self):
   from jev_mobile.device import Element,Screen
   birthday=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   confirm=Element('2','button','Confirm','','Button','',(10,70,200,120),('TAP',),False)
@@ -110,27 +110,27 @@ class RunnerSafetyTests(unittest.TestCase):
   picker=Screen('',[confirm,selected],'Select your birthday · Saturday, January 1, 2000 · Confirm','picker',1080,2340)
   form=Screen('',[save],'Your Birthday · 2000/01/01 · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','form',1080,2340)
   feed=Screen('',[],'Twomi home feed ready','feed',1080,2340)
-  fake=Mock();fake.wait_for_content.return_value=before;fake.observe.return_value=feed;fake.foreground.return_value='com.torilab.twomi.uat';fake.installed.return_value=True
+  fake=Mock();fake.wait_for_content.return_value=before;fake.observe.return_value=feed;fake.foreground.return_value='example.other.app';fake.installed.return_value=True
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.wait_for_change.side_effect=[picker,form,feed]
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value={'operation':'DONE','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}) as chooser:
-   result=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Reach the home feed'},Path(directory),expected_text='home feed ready',allow_consent=True)).run()
+   result=Agent(RunConfig('example.other.app','fake',{'goal':'Reach the home feed'},Path(directory),expected_text='home feed ready',allow_consent=True)).run()
   self.assertEqual(result['status'],'Passed')
   self.assertEqual(chooser.call_count,1)
   self.assertEqual([entry['operation'] for entry in result['steps'][1:4]],['BASE_STEP_TAP']*3)
 
- def test_twomi_birthday_base_step_does_not_save_without_consent_authorization(self):
+ def test_generic_date_gate_does_not_submit_without_consent_authorization(self):
   from jev_mobile.device import Element,Screen
   field=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   save=Element('2','button','Save','','Button','',(10,100,200,150),('TAP',),False)
   screen=Screen('',[field,save],'Your Birthday · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','before',1080,2340)
   agent=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=False))
   agent.device=Mock()
-  self.assertIsNone(agent._base_birthday_step(screen))
+  self.assertIsNone(agent._base_date_gate_step(screen))
   agent.device.tap.assert_not_called()
 
- def test_twomi_birthday_base_step_stops_on_underage_preselection(self):
+ def test_generic_date_gate_never_changes_a_preselected_date(self):
   from jev_mobile.device import DeviceError,Element,Screen
   field=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   selected=Element('2','control','Friday, January 1, 2016','','TextView','',(10,70,200,120),('TAP',),False,checked=True,checkable=True)
@@ -139,9 +139,9 @@ class RunnerSafetyTests(unittest.TestCase):
   picker=Screen('',[selected,confirm],'Select your birthday · Friday, January 1, 2016 · Confirm','picker',1080,2340)
   agent=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=True))
   agent.device=Mock();agent.device.wait_for_change.return_value=picker
-  with self.assertRaisesRegex(DeviceError,'under 13'):
-   agent._base_birthday_step(before)
-  agent.device.tap.assert_called_once_with(field)
+  with self.assertRaisesRegex(DeviceError,'no date was saved'):
+   agent._base_date_gate_step(before)
+  self.assertEqual([call.args[0].label for call in agent.device.tap.call_args_list],['Your Birthday','Confirm'])
 
  def test_birthday_save_is_a_consent_action_when_screen_says_by_saving(self):
   self.assertTrue(Agent.consent_confirmation_required('Save','By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy'))
@@ -165,7 +165,7 @@ class RunnerSafetyTests(unittest.TestCase):
   xml='<hierarchy><node scrollable="true" enabled="true" bounds="[0,0][1080,1721]"/><node scrollable="true" bounds="[0,1900][1080,2200]"/></hierarchy>'
   screen=Screen(xml,[],'Swipe up to select your companion','tutorial',1080,2340)
   device=AndroidDevice('fake');device.command=Mock()
-  gesture=device.swipe_companion_next_item(1080,2340,screen)
+  gesture=device.swipe_scrollable_next_item(1080,2340,screen)
   self.assertEqual(gesture['viewport'],[0,0,1080,1721])
   self.assertEqual(gesture['source'],'accessibility_scrollable_bounds')
   self.assertEqual(gesture['start'],[540,1548])
@@ -174,8 +174,8 @@ class RunnerSafetyTests(unittest.TestCase):
 
  def test_tutorial_swipe_without_bounds_avoids_bottom_navigation(self):
   device=AndroidDevice('fake');device.command=Mock()
-  gesture=device.swipe_companion_next_item(1080,2340)
-  self.assertEqual(gesture['source'],'fallback_video_region')
+  gesture=device.swipe_scrollable_next_item(1080,2340)
+  self.assertEqual(gesture['source'],'fallback_content_region')
   self.assertLess(gesture['start'][1],2340*.70)
   self.assertGreater(gesture['start'][1]-gesture['end'][1],2340*.50)
 
@@ -188,13 +188,13 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   gesture={'start':[270,1548],'end':[270,172],'duration_ms':300}
-  fake.swipe_companion_next_item.return_value=gesture
+  fake.swipe_scrollable_next_item.return_value=gesture
   decisions=[{'operation':op,'target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}} for op in ('SWIPE_UP','DONE')]
   with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions):
    result=Agent(RunConfig('app','fake',{'goal':'Reach the next feed item','steps':'Complete tutorial'},Path(directory),expected_text='troy john')).run()
   self.assertEqual(result['status'],'Passed')
   self.assertEqual(result['steps'][1]['gesture'],gesture)
-  fake.swipe_companion_next_item.assert_called_once()
+  fake.swipe_scrollable_next_item.assert_called_once()
   fake.tap.assert_not_called()
 
  def test_startup_waits_for_splash_to_expose_accessible_content(self):
@@ -281,7 +281,7 @@ class RunnerSafetyTests(unittest.TestCase):
    choice=choose(screen.elements,screen.text,'Open Profile',[])
   self.assertEqual(choice['operation'],'SWIPE_UP')
   self.assertEqual(set(captured[0]['questions']['operation']['criteria']),{'SWIPE_UP'})
-  self.assertIn('advance to the next feed item',captured[0]['questions']['operation']['criteria']['SWIPE_UP'])
+  self.assertIn('relevant content area',captured[0]['questions']['operation']['criteria']['SWIPE_UP'])
   self.assertNotIn('tap_target',captured[0]['questions'])
 
  def test_persistent_companion_tutorial_stops_after_one_swipe(self):
@@ -292,13 +292,13 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   fake.wait_for_change.return_value=screen
-  fake.swipe_companion_next_item.return_value={'start':[270,1548],'end':[270,172],'duration_ms':300}
+  fake.swipe_scrollable_next_item.return_value={'start':[270,1548],'end':[270,172],'duration_ms':300}
   answer={'operation':'SWIPE_UP','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}
   with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=answer):
    result=Agent(RunConfig('app','fake',{'goal':'Open Profile'},Path(directory))).run()
   self.assertEqual(result['status'],'Inconclusive')
-  self.assertIn('did not advance past the companion tutorial',result['notes'])
-  fake.swipe_companion_next_item.assert_called_once_with(1080,2340,screen)
+  self.assertIn('did not advance the screen',result['notes'])
+  fake.swipe_scrollable_next_item.assert_called_once_with(1080,2340,screen)
   fake.tap.assert_not_called()
 
  def test_jev_can_wait_once_after_submit_leaves_transient_empty_tree(self):
@@ -454,12 +454,10 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual(len(screen.elements),1)
   self.assertEqual(screen.elements[0].label,'Your Birthday')
 
- def test_missing_twomi_profile_accessibility_action_gets_visual_coordinate_fallback(self):
+ def test_no_project_specific_profile_coordinate_is_injected(self):
   xml='''<hierarchy><node text="Swipe up to select your companion" class="android.widget.TextView" bounds="[1,100][500,200]"/><node text="Genre preferences" class="android.widget.TextView" bounds="[10,1800][400,1880]" clickable="true"/></hierarchy>'''
   device=AndroidDevice('fake');device.size=lambda:(1080,2340)
   screen=device._parse(ET.fromstring(xml),xml)
-  target=next(e for e in screen.elements if e.label=='Profile')
-  self.assertEqual(target.resource_id,'jev:visual-fallback:twomi-profile-tab')
-  self.assertEqual(target.center,(923,2047))
+  self.assertFalse(any(e.label=='Profile' for e in screen.elements))
 
 if __name__=='__main__':unittest.main()

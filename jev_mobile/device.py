@@ -240,11 +240,6 @@ class AndroidDevice:
             elements.append(Element(str(len(elements)+1),role,'<credential field>' if password else label,a.get('resource-id',''),cls,value,rect,tuple(operations),sensitive,password,a.get('focused')=='true',a.get('checked')=='true',checkable))
             if len(elements)>=100:break
         joined_text=' '.join(texts)
-        # Twomi's feed bottom navigation renders the profile avatar without an
-        # accessibility action. Add a screenshot-verified relative-coordinate fallback.
-        if re.search(r'swipe\s+up\s+to\s+select\s+your\s+companion',joined_text,re.I) and not any(e.label.casefold() in {'profile','me','account'} for e in elements):
-            bounds=(round(width*.80),round(height*.84),round(width*.91),round(height*.91))
-            elements.append(Element(str(len(elements)+1),'button','Profile','jev:visual-fallback:twomi-profile-tab','coordinate-fallback','',bounds,('TAP',),False))
         # Page text is sent to the selector; sensitive EditText values are removed later by Agent._public_screen.
         semantic=json.dumps({'text':texts,'elements':[(e.role,e.label,e.value,e.bounds,e.operations,e.checked,e.checkable,e.focused) for e in elements]},ensure_ascii=False)
         digest=hashlib.sha256(semantic.encode()).hexdigest()[:16]
@@ -287,10 +282,10 @@ class AndroidDevice:
         y1,y2=(int(height*.75),int(height*.3)) if direction=='up' else (int(height*.3),int(height*.75))
         self.command('shell','input','swipe',str(x),str(y1),str(x),str(y2),'320')
 
-    def swipe_companion_next_item(self,width:int,height:int,screen:Screen|None=None) -> dict:
-        """Start inside the feed's scrollable viewport, not the controls below it."""
+    def swipe_scrollable_next_item(self,width:int,height:int,screen:Screen|None=None) -> dict:
+        """Swipe through the largest accessible content viewport when available."""
         viewport=(0,0,width,int(height*.70))
-        source='fallback_video_region'
+        source='fallback_content_region'
         if screen and screen.xml:
             try:
                 candidates=[]
@@ -307,8 +302,8 @@ class AndroidDevice:
             except ET.ParseError:
                 pass
         left,top,right,bottom=viewport
-        # Swipe through the center of the feed item so edge overlays or
-        # neighboring gesture regions do not consume the tutorial gesture.
+        # Swipe through the content center so edge overlays or neighboring
+        # gesture regions do not consume an instruction-driven gesture.
         x=left+(right-left)//2
         gesture={'start':[x,top+int((bottom-top)*.90)],'end':[x,top+int((bottom-top)*.10)],'duration_ms':300,'viewport':list(viewport),'source':source}
         self.command('shell','input','swipe',str(x),str(gesture['start'][1]),str(x),str(gesture['end'][1]),str(gesture['duration_ms']))

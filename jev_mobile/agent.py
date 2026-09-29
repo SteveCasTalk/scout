@@ -20,10 +20,10 @@ EMAIL_VALUE=re.compile(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',re.I)
 EMAIL_FIELD=re.compile(r'email|e-mail|username|user name|account',re.I)
 PASSWORD_FIELD=re.compile(r'password|passcode|pass word|passwd',re.I)
 PRIVATE_CODE_FIELD=re.compile(r'(?:^|[^a-z0-9])(?:pin|otp|one[- _]?time[- _]?code|verification[- _]?code|security[- _]?code)(?:$|[^a-z0-9])',re.I)
-COMPANION_TUTORIAL=re.compile(r'\bswipe\s+up\s+to\s+select\s+your\s+companion\b',re.I)
-TWOMI_UAT_PACKAGE='com.torilab.twomi.uat'
-BIRTHDAY_LABEL=re.compile(r'\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})\b')
-BIRTHDAY_VALUE=re.compile(r'\b(\d{4})/(\d{2})/(\d{2})\b')
+SWIPE_INSTRUCTION=re.compile(r'\bswipe\s+up\b',re.I)
+DATE_OF_BIRTH_GATE=re.compile(r'\b(?:your\s+)?birthday\b|\bdate\s+of\s+birth\b|\bdate\s+of\s+birthday\b',re.I)
+SELECTED_DATE_LABEL=re.compile(r'\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})\b')
+DATE_VALUE=re.compile(r'\b(\d{4})/(\d{2})/(\d{2})\b')
 
 @dataclass
 class RunConfig:
@@ -47,8 +47,8 @@ class Agent:
         self.history:list[dict[str,Any]]=[]
         self.started=time.monotonic()
         self.credential_used=False
-        self.tutorial_swipe_attempted=False
-        self.birthday_base_step_attempted=False
+        self.instruction_swipe_attempted=False
+        self.date_gate_attempted=False
         self.verification={'status':'not_run','method':'exact_visible_text','expected_text':config.expected_text,'observed_text':''}
         self.output=config.output
         self.output.mkdir(parents=True,exist_ok=True)
@@ -125,77 +125,65 @@ class Agent:
         return bool(CONSENT_GATE.search(screen_text) and CONSENT_ACTION.fullmatch(label))
 
     @staticmethod
-    def _selected_birthday(screen:Screen)->date|None:
+    def _selected_date(screen:Screen)->date|None:
         for element in screen.elements:
             if not element.checked:
                 continue
-            match=BIRTHDAY_LABEL.search(element.label)
+            match=SELECTED_DATE_LABEL.search(element.label)
             if not match:
                 continue
             try:return datetime.strptime(match.group(1),'%B %d, %Y').date()
             except ValueError:continue
         return None
 
-    @staticmethod
-    def _adult_enough(birthday:date,today:date|None=None)->bool:
-        today=today or date.today()
-        age=today.year-birthday.year-((today.month,today.day)<(birthday.month,birthday.day))
-        return age>=13
-
-    def _base_birthday_step(self,screen:Screen)->Screen|None:
-        """Use one eligible date already selected by Twomi's picker, then save once.
-
-        This is intentionally scoped to Twomi UAT and requires the run's explicit
-        consent authorization. It never scrolls across years or substitutes dates.
-        """
-        if self.birthday_base_step_attempted or self.config.package!=TWOMI_UAT_PACKAGE:
+    def _base_date_gate_step(self,screen:Screen)->Screen|None:
+        """Complete a date-of-birth gate with its already-selected value, once."""
+        if self.date_gate_attempted:
             return None
-        if not re.search(r'\bYour Birthday\b',screen.text,re.I) or not re.search(r'\bSave\b',screen.text,re.I):
+        if not DATE_OF_BIRTH_GATE.search(screen.text) or not re.search(r'\b(?:save|continue|submit)\b',screen.text,re.I):
             return None
-        if self.consent_confirmation_required('Save',screen.text) and not self.config.allow_consent:
+        submit_label=next((label for label in ('Save','Continue','Submit') if re.search(rf'\b{label}\b',screen.text,re.I)), 'Save')
+        if self.consent_confirmation_required(submit_label,screen.text) and not self.config.allow_consent:
             return None
-        self.birthday_base_step_attempted=True
+        self.date_gate_attempted=True
 
         def tap_and_wait(current:Screen,element:Element,stage:str)->Screen:
             before=current
             self.device.tap(element)
             following=self.wait(before,5)
-            record={'step':len(self.history),'elapsed_ms':self.elapsed_ms(),'operation':'BASE_STEP_TAP','label':element.label,'target':element.index,'base_step':'Twomi birthday: '+stage,'before_fingerprint':before.fingerprint,'after_fingerprint':following.fingerprint,'page_changed':before.fingerprint!=following.fingerprint,'screen':self.public_screen(following)}
+            record={'step':len(self.history),'elapsed_ms':self.elapsed_ms(),'operation':'BASE_STEP_TAP','label':element.label,'target':element.index,'base_step':'Date gate: '+stage,'before_fingerprint':before.fingerprint,'after_fingerprint':following.fingerprint,'page_changed':before.fingerprint!=following.fingerprint,'screen':self.public_screen(following)}
             record['screenshot']=self.screenshot(following,len(self.history)+1)
             self.history.append(record)
             return following
 
         current=screen
         selected_date=None
-        date_value=BIRTHDAY_VALUE.search(current.text)
+        date_value=DATE_VALUE.search(current.text)
         if date_value:
-            selected_date=date(int(date_value.group(1)),int(date_value.group(2)),int(date_value.group(3)))
+            try:selected_date=date(*(int(part) for part in date_value.groups()))
+            except ValueError:raise DeviceError('The displayed date is invalid; submit was not pressed.') from None
         else:
-            field=next((e for e in current.elements if e.label.casefold()=='your birthday' and 'TAP' in e.operations),None)
+            field=next((e for e in current.elements if DATE_OF_BIRTH_GATE.search(e.label) and 'TAP' in e.operations),None)
             if not field:
-                raise DeviceError('Birthday gate is visible but its date field is not actionable; no date was entered.')
+                raise DeviceError('Date-of-birth gate is visible but its date field is not actionable; no date was entered.')
             picker=tap_and_wait(current,field,'open date picker')
-            selected_date=self._selected_birthday(picker)
+            selected_date=self._selected_date(picker)
             if not selected_date:
-                raise DeviceError('Birthday picker has no preselected date; Jev will not guess or scroll through dates.')
-            if not self._adult_enough(selected_date):
-                raise DeviceError(f'Twomi birthday picker preselected {selected_date.isoformat()}, which is under 13; no date was saved.')
+                raise DeviceError('Date picker has no preselected date; Jev will not guess or scroll through dates.')
             confirm=next((e for e in picker.elements if e.label.casefold()=='confirm' and 'TAP' in e.operations),None)
             if not confirm:
                 raise DeviceError('Birthday picker has no enabled Confirm action; no date was saved.')
             current=tap_and_wait(picker,confirm,f'confirm preselected date {selected_date.isoformat()}')
 
-        if not self._adult_enough(selected_date):
-            raise DeviceError(f'Twomi birthday {selected_date.isoformat()} is under 13; no date was saved.')
-        visible_date=BIRTHDAY_VALUE.search(current.text)
+        visible_date=DATE_VALUE.search(current.text)
         if not visible_date or tuple(map(int,visible_date.groups()))!=(selected_date.year,selected_date.month,selected_date.day):
-            raise DeviceError('Twomi did not show the confirmed birthday on the form; Save was not pressed.')
-        save=next((e for e in current.elements if e.label.casefold()=='save' and 'TAP' in e.operations),None)
+            raise DeviceError('The form did not show the confirmed date; no date was saved and submit was not pressed.')
+        save=next((e for e in current.elements if e.label.casefold() in {'save','continue','submit'} and 'TAP' in e.operations),None)
         if not save:
-            raise DeviceError('Birthday was selected, but Save is still disabled; stopping without repeating date entry.')
+            raise DeviceError('Date was selected, but submit is still disabled; stopping without repeating date entry.')
         if self.consent_confirmation_required(save.label,current.text) and not self.config.allow_consent:
-            raise DeviceError('Saving the birthday also accepts Terms/Privacy consent; this run is not authorized to save.')
-        return tap_and_wait(current,save,f'save confirmed date {selected_date.isoformat()}')
+            raise DeviceError('Submitting the date also accepts Terms/Privacy consent; this run is not authorized to continue.')
+        return tap_and_wait(current,save,f'submit confirmed date {selected_date.isoformat()}')
 
     def repeated_without_progress(self,operation:str,selected:Element,screen:Screen)->bool:
         return any(
@@ -286,22 +274,22 @@ class Agent:
                     continue
                 if foreground and foreground!=self.config.package:
                     return self.write_result('Execution error',f'App left the allowed package; foreground is {foreground}.',screen)
-                birthday_screen=self._base_birthday_step(screen)
-                if birthday_screen is not None:
-                    if re.search(r'\bYour Birthday\b',birthday_screen.text,re.I):
-                        return self.write_result('Inconclusive','Twomi birthday Save did not leave the birthday gate; stopped without retrying.',birthday_screen)
-                    screen=birthday_screen
+                date_gate_screen=self._base_date_gate_step(screen)
+                if date_gate_screen is not None:
+                    if DATE_OF_BIRTH_GATE.search(date_gate_screen.text):
+                        return self.write_result('Inconclusive','Date submission did not leave the date gate; stopped without retrying.',date_gate_screen)
+                    screen=date_gate_screen
                     continue
-                tutorial_visible=bool(COMPANION_TUTORIAL.search(screen.text))
-                if tutorial_visible and self.tutorial_swipe_attempted:
-                    return self.write_result('Inconclusive','The upward swipe did not advance past the companion tutorial; stopped before tapping covered feed controls.',screen)
+                tutorial_visible=bool(SWIPE_INSTRUCTION.search(screen.text))
+                if tutorial_visible and self.instruction_swipe_attempted:
+                    return self.write_result('Inconclusive','The instructed upward swipe did not advance the screen; stopped before tapping covered controls.',screen)
                 public=self.public_screen(screen)
                 decision=choose(screen.elements,public['text'],goal,self.history)
                 op=decision['operation']
                 if tutorial_visible and op!='SWIPE_UP':
-                    return self.write_result('Inconclusive','The tutorial overlay is visible; stopped before tapping covered feed controls because its required upward swipe was not selected.',screen)
+                    return self.write_result('Inconclusive','An upward-swipe instruction is visible; stopped before tapping covered controls because its required gesture was not selected.',screen)
                 if tutorial_visible:
-                    self.tutorial_swipe_attempted=True
+                    self.instruction_swipe_attempted=True
                 selected=next((e for e in screen.elements if e.index==decision['target']),None)
                 entry={'step':step,'elapsed_ms':self.elapsed_ms(),'operation':op,'target':decision['target'],'label':self.redact(selected.label) if selected else None,'resource_id':selected.resource_id if selected else None,'confidence':decision['confidence'],'model':decision['model'],'latency_ms':decision['latency_ms'],'before_fingerprint':screen.fingerprint,'jev':self.redact_object(decision['jev'])}
                 if op=='DONE':
@@ -405,7 +393,7 @@ class Agent:
                         # Close it before the next observation so locators refer to tappable UI.
                         self.device.back()
                 elif op=='SWIPE_UP':
-                    if tutorial_visible:entry['gesture']=self.device.swipe_companion_next_item(screen.width,screen.height,screen)
+                    if tutorial_visible:entry['gesture']=self.device.swipe_scrollable_next_item(screen.width,screen.height,screen)
                     else:self.device.swipe('up',screen.width,screen.height)
                 elif op=='SWIPE_DOWN':self.device.swipe('down',screen.width,screen.height)
                 elif op=='BACK':self.device.back()
