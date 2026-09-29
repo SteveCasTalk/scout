@@ -23,7 +23,7 @@ def main()->int:
     parser.add_argument('--adb',default=os.getenv('ADB_PATH') or 'adb')
     parser.add_argument('--output',type=Path)
     parser.add_argument('--max-steps',type=int,default=40)
-    parser.add_argument('--allow-device-prompts',action='store_true',help='Leave Android autofill and credential providers enabled during the run')
+    parser.add_argument('--allow-device-prompts',action='store_true',help='Leave Android autofill and credential providers enabled during the run; notification prompts remain suppressed')
     args=parser.parse_args()
     if args.case:
         case=json.loads(args.case.read_text(encoding='utf-8'))
@@ -43,7 +43,7 @@ def main()->int:
     assertion=args.expected_text or case.get('assertion_text','')
     device=AndroidDevice(serial,args.adb)
     prompt_policy=nullcontext() if args.allow_device_prompts else device.suppress_credential_prompts()
-    with prompt_policy:
+    with prompt_policy,device.suppress_notification_prompt(args.package):
         result=Agent(RunConfig(args.package,serial,case,output,args.adb,args.max_steps,180,assertion)).run()
     print(json.dumps({'status':result['status'],'notes':result['notes'],'result':str(output/'result.json'),'trace':str(output/'trace.json')},ensure_ascii=False))
     return 0 if result['status'] in ('Passed','Inconclusive') else 2

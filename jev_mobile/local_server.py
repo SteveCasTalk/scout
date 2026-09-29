@@ -74,11 +74,29 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json(503, {"error": f"Could not query Android devices: {type(exc).__name__}"})
             return
+        if parsed.path == "/runs":
+            root = ROOT / "runner-output"
+            runs = []
+            if root.is_dir():
+                for folder in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name, reverse=True):
+                    result_path = folder / "result.json"
+                    if not result_path.is_file():
+                        continue
+                    try:
+                        result = json.loads(result_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(result, dict) or not str(result.get("case_id", "")).startswith("prompt-"):
+                        continue
+                    artifacts = sorted(path.name for path in folder.iterdir() if path.is_file() and (path.suffix == ".png" or path.name in {"result.json", "trace.json", "jev-output.json", "run-verification.json"}))
+                    runs.append({"run_id": folder.name, "result": result, "artifacts": artifacts})
+            self._json(200, {"runs": runs[:50]})
+            return
         match = re.fullmatch(r"/runs/([A-Za-z0-9_-]{1,80})/artifacts/([^/]+)", parsed.path)
         if match:
             run_id, encoded_name = match.groups()
             name = unquote(encoded_name)
-            if name not in {"result.json", "trace.json", "jev-output.json"} and not re.fullmatch(r"\d{3}\.png", name):
+            if name not in {"result.json", "trace.json", "jev-output.json", "run-verification.json"} and not re.fullmatch(r"\d{3}\.png", name):
                 self._json(400, {"error": "Unsupported artifact."})
                 return
             root = (ROOT / "runner-output").resolve()
@@ -153,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
             output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             assertion = str(case.get("assertion_text", "")).strip()
             device = AndroidDevice(device_serial, adb)
-            with device.suppress_credential_prompts():
+            with device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
                 result = Agent(RunConfig(package, device_serial, case, output, adb, max_steps, 180, assertion)).run()
             artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix == ".png" or path.name in {"result.json", "trace.json", "jev-output.json"}))
             self._json(200, {"run_id": output.name, "result": result, "artifacts": artifacts})

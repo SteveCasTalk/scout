@@ -11,6 +11,7 @@ import re
 import zipfile
 from io import BytesIO
 from typing import Any
+from urllib.parse import quote
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
@@ -74,9 +75,26 @@ def list_android_devices(adb: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+def search_android_packages(query: str, serial: str | None = None, limit: int = 30, adb: str | None = None) -> dict[str, Any]:
+    """Search third-party Android package IDs installed on a connected device, useful for setting a project's app ID."""
+    query = query.strip().casefold()
+    if not query or len(query) > 120:
+        raise ValueError("query must be 1–120 characters.")
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100.")
+    load_local_env()
+    adb_path = adb or os.getenv("ADB_PATH") or "adb"
+    device_serial = _select_device(adb_path, serial)
+    output = AndroidDevice(device_serial, adb_path).command("shell", "pm", "list", "packages", "-3", timeout=20).stdout.decode(errors="replace")
+    packages = sorted({line.removeprefix("package:").strip() for line in output.splitlines() if line.startswith("package:")})
+    matches = [package for package in packages if query in package.casefold()]
+    return {"device": device_serial, "query": query, "packages": matches[:limit], "count": len(matches), "truncated": len(matches) > limit}
+
+
+@mcp.tool()
 def run_android_test(
     case_file: str,
-    package: str = DEFAULT_PACKAGE,
+    package: str | None = None,
     serial: str | None = None,
     max_steps: int = 40,
     adb: str | None = None,
@@ -97,13 +115,21 @@ def run_android_test(
         raise ValueError(f"Could not read the test case JSON: {exc}") from exc
     if not isinstance(case, dict) or any(key not in case for key in CASE_FIELDS):
         raise ValueError("Test-case JSON must contain id, revision, goal, steps, and expected.")
+    package = package or str(case.get("app_id", "")).strip()
+    if not package:
+        if str(case.get("project", "General")).strip().casefold() in {"general", "ai avatar"}:
+            package = DEFAULT_PACKAGE
+        else:
+            raise ValueError(f"Set the app package ID on the {case.get('project')} case before running it.")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,240}", package):
+        raise ValueError("package must be a valid Android application ID.")
 
     adb_path = adb or os.getenv("ADB_PATH") or "adb"
     device_serial = _select_device(adb_path, serial)
     output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     assertion = str(case.get("assertion_text", "")).strip()
     device = AndroidDevice(device_serial, adb_path)
-    with device.suppress_credential_prompts():
+    with device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
         result = Agent(
             RunConfig(
                 package=package,
@@ -135,23 +161,29 @@ def run_android_test_from_prompt(
     expected: str,
     assertion_text: str = "",
     title: str = "Prompt-driven test",
-    package: str = DEFAULT_PACKAGE,
+    package: str | None = None,
     serial: str | None = None,
     max_steps: int = 40,
     adb: str | None = None,
     test_email: str = "",
     test_password: str = "",
+    project: str = "General",
+    allow_consent: bool = False,
 ) -> dict[str, Any]:
     """Run an Android test directly from the user's request without creating or selecting a saved case.
 
     The assistant should translate the user's prompt into a concise goal, ordered steps, and expected outcome.
+    For projects other than General or AI Avatar, provide the app package ID or first use search_android_packages.
     Credentials may be supplied for this run or loaded from local .env. They are used only by the local device runner,
     redacted from saved outputs, and are not included in Jev model requests. Tool arguments are still visible to the MCP
     host and client; for stronger secrecy, omit them and configure credentials in .env instead.
+    Legal or privacy consent controls are blocked by default. Set allow_consent=true only when the user explicitly
+    authorizes accepting the app's terms/privacy consent for this specific run.
     """
     load_local_env()
     goal, steps, expected = goal.strip(), steps.strip(), expected.strip()
     title = title.strip()
+    project = project.strip()
     assertion_text = assertion_text.strip()
     if not goal or len(goal) > 4000:
         raise ValueError("goal must be 1–4000 characters.")
@@ -161,6 +193,16 @@ def run_android_test_from_prompt(
         raise ValueError("expected must be 1–4000 characters.")
     if not title or len(title) > 160:
         raise ValueError("title must be 1–160 characters.")
+    if not project or len(project) > 100:
+        raise ValueError("project must be 1–100 characters.")
+    if not package:
+        if project.casefold() in {"general", "ai avatar"}:
+            package = DEFAULT_PACKAGE
+        else:
+            raise ValueError(f"Provide the Android package ID for project {project!r}; refusing to launch the default app for another project.")
+    package = package.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,240}", package):
+        raise ValueError("package must be a valid Android application ID.")
     if len(assertion_text) > 240:
         raise ValueError("assertion_text must be at most 240 characters.")
     if len(test_email) > 254 or len(test_password) > 200:
@@ -175,6 +217,9 @@ def run_android_test_from_prompt(
     case = {
         "id": "prompt-" + datetime.now().strftime("%Y%m%d%H%M%S%f"),
         "revision": 1,
+        "project": project,
+        "app_id": package,
+        "package": package,
         "title": title,
         "goal": goal,
         "steps": steps,
@@ -183,7 +228,7 @@ def run_android_test_from_prompt(
     }
     output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     device = AndroidDevice(device_serial, adb_path)
-    with device.suppress_credential_prompts():
+    with device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
         result = Agent(
             RunConfig(
                 package=package,
@@ -196,12 +241,15 @@ def run_android_test_from_prompt(
                 expected_text=assertion_text,
                 test_email=test_email,
                 test_password=test_password,
+                allow_consent=allow_consent,
             )
         ).run()
     return {
         "run_id": output.name,
+        "project": project,
         "case_source": "user prompt",
         "case_saved": False,
+        "consent_authorized": allow_consent,
         "status": result["status"],
         "notes": result["notes"],
         "verification": result["verification"],
@@ -209,6 +257,7 @@ def run_android_test_from_prompt(
         "result_file": str(output / "result.json"),
         "trace_file": str(output / "trace.json"),
         "jev_audit_file": str(output / "jev-output.json"),
+        "dashboard_url": f"{os.getenv('JEV_DASHBOARD_URL', 'http://localhost:5173').rstrip('/')}?project={quote(project)}&syncRun={quote(output.name)}",
     }
 
 

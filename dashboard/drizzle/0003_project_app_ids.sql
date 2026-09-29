@@ -1,0 +1,1 @@
+ALTER TABLE `test_cases` ADD `app_id` text DEFAULT '' NOT NULL;

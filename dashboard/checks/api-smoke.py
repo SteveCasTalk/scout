@@ -2,7 +2,7 @@
 Run against a local preview with initialized storage: python3 checks/api-smoke.py
 Creates labeled verification records in the local development database.
 """
-import json, urllib.request, urllib.error, http.cookiejar
+import json, urllib.request, urllib.error, http.cookiejar, uuid
 BASE='http://localhost:5173'
 jar=http.cookiejar.CookieJar()
 client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -16,8 +16,9 @@ def call(path,body=None,method=None,expected=200,headers=None,raw=None):
     data=r.read()
     assert r.status==expected,(path,r.status,data)
     return json.loads(data) if 'application/json' in r.headers.get('Content-Type','') else data
-c={'title':'[Dashboard verification] Invalid sign-in','platform':'Android','suite':'Dashboard verification','goal':'Verify a rejected login','preconditions':'Synthetic dashboard data only; no device execution','steps':'Open sign in\nEnter invalid credentials\nSubmit','expected':'Error appears'}
+c={'project':'Arcana','app_id':'com.example.arcana','title':'[Dashboard verification] Invalid sign-in','platform':'Android','suite':'Dashboard verification','goal':'Verify a rejected login','preconditions':'Synthetic dashboard data only; no device execution','steps':'Open sign in\nEnter invalid credentials\nSubmit','expected':'Error appears'}
 created=call('/api/cases',c,'POST',201)
+assert created['project']=='Arcana' and created['app_id']=='com.example.arcana'
 call('/api/cases',{**c,'title':' '},'POST',400)
 r=call('/api/runs',{'caseId':created['id'],'revision':1,'status':'Inconclusive','build':'synthetic-1','device':'No device — dashboard check','notes':'Synthetic API verification. This is not a mobile test result.'},'POST',201)
 updated=call('/api/cases',{**created,'expected':'Revised expectation'},'PUT')
@@ -37,8 +38,14 @@ except urllib.error.HTTPError as auth_error:assert auth_error.code==401
 else:raise AssertionError('Anonymous access was not rejected')
 assert any(x['id']==created['id'] for x in call('/api/cases'))
 assert any(x['id']==e['id'] for x in call('/api/evidence'))
-imported=call('/api/runs', {'caseId':created['id'],'revision':2,'status':'Execution error','build':'3.34.0','device':'emulator-5554','notes':'Emulator blocked by app startup check.','source':'Jev import','trace':[{'step':0,'operation':'OBSERVE','elapsed_ms':100,'label':None,'screenshot':'000.png'}]}, 'POST', 201)
-assert imported['source']=='Jev import' and imported['trace'][0]['operation']=='OBSERVE'
+external_run_id='prompt-smoke-'+uuid.uuid4().hex
+prompt_run={'caseId':created['id'],'revision':2,'externalRunId':external_run_id,'status':'Execution error','build':'3.34.0','device':'emulator-5554','notes':'Synthetic prompt-run dashboard smoke check.','source':'Prompt run','trace':[{'step':0,'operation':'OBSERVE','elapsed_ms':100,'label':None,'screenshot':'000.png'}]}
+imported=call('/api/runs', prompt_run, 'POST', 201)
+duplicate=call('/api/runs', prompt_run, 'POST', 200)
+assert duplicate['duplicate'] and duplicate['id']==imported['id']
+assert imported['source']=='Prompt run' and imported['trace'][0]['operation']=='OBSERVE'
 assert next(x for x in call('/api/runs') if x['id']==imported['id'])['trace'][0]['screenshot']=='000.png'
-print('PASS: create, validation, revision conflict, immutable run snapshot, stale-run rejection, evidence upload/read/range, list persistence, cross-origin rejection, anonymous rejection, imported Jev trace.')
+stored_prompt=next(x for x in call('/api/runs') if x['id']==imported['id'])
+assert stored_prompt['snapshot']['project']=='Arcana' and stored_prompt['snapshot']['app_id']=='com.example.arcana' and stored_prompt['external_run_id']==external_run_id
+print('PASS: create/project grouping, validation, revision conflict, immutable run snapshot, stale-run rejection, evidence upload/read/range, list persistence, cross-origin rejection, anonymous rejection, prompt-run trace and deduplication.')
 print(json.dumps({'caseId':created['id'],'runId':r['id'],'evidenceId':e['id']}))

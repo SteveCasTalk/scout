@@ -2,9 +2,13 @@
 
 Private workspace for Android/iOS test cases, manual results, imported Jev Android runner results, and evidence.
 
-Create cases with goals, steps, expected results, and an optional exact visible-text assertion. Export a case to `jev_mobile`, then import the runner's `result.json` into Test runs. The dashboard stores the run's test revision and action timeline. Expand a Jev decision to inspect its request questions, selected answers, option probabilities, confidence, model, latency, and request/response JSON. The runner also writes `jev-output.json` for standalone analysis. Attach screenshots, videos, or logs to the run; uploads are limited to 25 MB per file.
+Create cases with a project name, Android package or iOS bundle ID, goals, steps, expected results, and an optional exact visible-text assertion. Filter cases and reports by project (for example, Arcana or AI Avatar). Export a case to `jev_mobile`, then import the runner's `result.json` into Test runs. Prompt-driven MCP runs are synced from the local bridge into the dashboard with their artifacts, without requiring a saved case first. The dashboard stores each run's test revision and action timeline. Expand a Jev decision to inspect its request questions, selected answers, option probabilities, confidence, model, latency, and request/response JSON. The runner also writes `jev-output.json` for standalone analysis. Attach screenshots, videos, or logs to the run; uploads are limited to 25 MB per file.
 
 The dashboard does not directly control a USB device. The Android runner is local and described in the [workspace README](../README.md). The installed AI Avatar UAT build currently rejects the emulator before its authentication screen, so there is no verified login test yet.
+
+## Prompt-run report sync
+
+When an MCP `run_android_test_from_prompt` call completes, it returns a dashboard URL containing the project and local run ID. Open that URL while the dashboard and local bridge are running. The dashboard imports the prompt run, saves an on-demand test snapshot under the named project, uploads its evidence, deduplicates repeated syncs, and opens the report. Alternatively, choose **Test runs → Sync MCP runs** to import local prompt runs. Project names are labels entered on cases or supplied to MCP; use consistent names such as `Arcana` and `AI Avatar` to filter their reports separately.
 
 ## Run Jev from the dashboard
 
@@ -23,10 +27,12 @@ npm ci
 npm run build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_common_cardiac.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_famous_living_lightning.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_projects_and_prompt_runs.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_project_app_ids.sql
 npm run dev
 ```
 
-Apply each migration only once to a local database. Existing checkouts need only migrations they have not already applied. The bundled local sign-in route creates a development identity; production identity is supplied by the hosting platform.
+Apply each migration only once to a local database. Existing checkouts need only migrations they have not already applied. Migration `0002_projects_and_prompt_runs.sql` adds project labels and MCP-run deduplication; `0003_project_app_ids.sql` adds the Android package or iOS bundle ID per case. The bundled local sign-in route creates a development identity; production identity is supplied by the hosting platform.
 
 ```sh
 npx tsc --noEmit
