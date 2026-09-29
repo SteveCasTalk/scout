@@ -287,10 +287,28 @@ class AndroidDevice:
         y1,y2=(int(height*.75),int(height*.3)) if direction=='up' else (int(height*.3),int(height*.75))
         self.command('shell','input','swipe',str(x),str(y1),str(x),str(y2),'320')
 
-    def swipe_companion_next_item(self,width:int,height:int) -> dict:
-        """Swipe the video left of tutorial artwork and above caption/feed controls."""
-        x=width//4
-        gesture={'start':[x,int(height*.50)],'end':[x,int(height*.20)],'duration_ms':300}
+    def swipe_companion_next_item(self,width:int,height:int,screen:Screen|None=None) -> dict:
+        """Start inside the feed's scrollable viewport, not the controls below it."""
+        viewport=(0,0,width,int(height*.70))
+        source='fallback_video_region'
+        if screen and screen.xml:
+            try:
+                candidates=[]
+                for node in ET.fromstring(screen.xml).iter('node'):
+                    match=BOUNDS.fullmatch(node.get('bounds',''))
+                    if node.get('scrollable')!='true' or node.get('enabled')=='false' or not match:continue
+                    left,top,right,bottom=map(int,match.groups())
+                    bounds=(max(0,left),max(0,top),min(width,right),min(height,bottom))
+                    left,top,right,bottom=bounds
+                    if right-left>=width*.5 and bottom-top>=height*.3:candidates.append(bounds)
+                if candidates:
+                    viewport=max(candidates,key=lambda b:(b[2]-b[0])*(b[3]-b[1]))
+                    source='accessibility_scrollable_bounds'
+            except ET.ParseError:
+                pass
+        left,top,right,bottom=viewport
+        x=left+(right-left)//4
+        gesture={'start':[x,top+int((bottom-top)*.90)],'end':[x,top+int((bottom-top)*.10)],'duration_ms':300,'viewport':list(viewport),'source':source}
         self.command('shell','input','swipe',str(x),str(gesture['start'][1]),str(x),str(gesture['end'][1]),str(gesture['duration_ms']))
         return gesture
 

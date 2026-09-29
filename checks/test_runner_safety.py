@@ -85,6 +85,25 @@ class RunnerSafetyTests(unittest.TestCase):
   device.command.assert_any_call('shell','cmd','appops','set','app','POST_NOTIFICATION','default',timeout=15)
   self.assertFalse(any('reset' in call.args for call in device.command.call_args_list))
 
+ def test_tutorial_swipe_starts_inside_feed_not_bottom_controls(self):
+  from jev_mobile.device import Screen
+  xml='<hierarchy><node scrollable="true" enabled="true" bounds="[0,0][1080,1721]"/><node scrollable="true" bounds="[0,1900][1080,2200]"/></hierarchy>'
+  screen=Screen(xml,[],'Swipe up to select your companion','tutorial',1080,2340)
+  device=AndroidDevice('fake');device.command=Mock()
+  gesture=device.swipe_companion_next_item(1080,2340,screen)
+  self.assertEqual(gesture['viewport'],[0,0,1080,1721])
+  self.assertEqual(gesture['source'],'accessibility_scrollable_bounds')
+  self.assertEqual(gesture['start'],[270,1548])
+  self.assertEqual(gesture['end'],[270,172])
+  device.command.assert_called_once_with('shell','input','swipe','270','1548','270','172','300')
+
+ def test_tutorial_swipe_without_bounds_avoids_bottom_navigation(self):
+  device=AndroidDevice('fake');device.command=Mock()
+  gesture=device.swipe_companion_next_item(1080,2340)
+  self.assertEqual(gesture['source'],'fallback_video_region')
+  self.assertLess(gesture['start'][1],2340*.70)
+  self.assertGreater(gesture['start'][1]-gesture['end'][1],2340*.50)
+
  def test_tutorial_dismissal_resumes_case_and_records_gesture(self):
   from jev_mobile.device import Screen
   before=Screen('',[],'Swipe up to select your companion','tutorial',1080,2340)
@@ -93,7 +112,7 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.wait_for_change.return_value=after;fake.foreground.return_value='app';fake.installed.return_value=True
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
-  gesture={'start':[270,1170],'end':[270,468],'duration_ms':300}
+  gesture={'start':[270,1548],'end':[270,172],'duration_ms':300}
   fake.swipe_companion_next_item.return_value=gesture
   decisions=[{'operation':op,'target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}} for op in ('SWIPE_UP','DONE')]
   with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions):
@@ -189,13 +208,13 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   fake.wait_for_change.return_value=screen
-  fake.swipe_companion_next_item.return_value={'start':[270,1170],'end':[270,468],'duration_ms':300}
+  fake.swipe_companion_next_item.return_value={'start':[270,1548],'end':[270,172],'duration_ms':300}
   answer={'operation':'SWIPE_UP','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}
   with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=answer):
    result=Agent(RunConfig('app','fake',{'goal':'Open Profile'},Path(directory))).run()
   self.assertEqual(result['status'],'Inconclusive')
   self.assertIn('did not advance past the companion tutorial',result['notes'])
-  fake.swipe_companion_next_item.assert_called_once_with(1080,2340)
+  fake.swipe_companion_next_item.assert_called_once_with(1080,2340,screen)
   fake.tap.assert_not_called()
 
  def test_jev_can_wait_once_after_submit_leaves_transient_empty_tree(self):
@@ -283,6 +302,39 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual(empty.elements[0].operations,('TYPE_TEXT',))
   self.assertNotEqual(empty.fingerprint,focused.fingerprint)
   self.assertTrue(focused.elements[0].public()['focused'])
+
+ def test_mcp_run_yields_for_non_sensitive_text_and_resumes_without_recording_the_value(self):
+  from jev_mobile.device import Element,Screen
+  before=Screen('<hierarchy/>',[Element('1','textbox','Search','app:id/search','EditText','',(0,0,300,80),('TYPE_TEXT',),True)],'Search','before',1080,1920)
+  focused=Screen('<hierarchy/>',[Element('1','textbox','Search','app:id/search','EditText','',(0,0,300,80),('TYPE_TEXT',),True,False,True)],'Search','focused',1080,1920)
+  after=Screen('<hierarchy/>',[],'Results loaded','results',1080,1920)
+  fake=Mock();fake.wait_for_content.return_value=before;fake.observe.side_effect=[before,focused,focused,after];fake.wait_for_change.return_value=after;fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  typed=[];fake.type_text.side_effect=lambda _field,value:typed.append(value)
+  decisions=[{'operation':'TYPE_TEXT','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}},{'operation':'DONE','target':None,'confidence':.99,'model':'test','latency_ms':1,'jev':{}}]
+  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions):
+   agent=Agent(RunConfig('app','fake',{'goal':'Search for Jisoo','steps':'Enter Jisoo in the search field'},Path(directory),expected_text='Results loaded',mcp_host_text=True))
+   pending=agent.run()
+   self.assertEqual(pending['status'],'awaiting_input')
+   self.assertEqual(pending['text_request']['field']['label'],'Search')
+   self.assertIn('Jisoo',pending['text_request']['steps'])
+   result=agent.resume_text('Jisoo')
+   trace=json.loads((Path(directory)/'trace.json').read_text())
+  self.assertEqual(result['status'],'Passed')
+  self.assertEqual(typed,['Jisoo'])
+  self.assertEqual(trace[1]['text_source'],'MCP host LLM')
+  self.assertNotIn('text',trace[1])
+
+ def test_mcp_host_text_is_never_requested_for_one_time_codes(self):
+  from jev_mobile.device import Element,Screen
+  screen=Screen('<hierarchy/>',[Element('1','textbox','Verification code','app:id/otp','EditText','',(0,0,300,80),('TYPE_TEXT',),True,False,True)],'Verification code','otp',1080,1920)
+  fake=Mock();fake.wait_for_content.return_value=screen;fake.observe.return_value=screen;fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  decision={'operation':'TYPE_TEXT','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}}
+  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=decision):
+   result=Agent(RunConfig('app','fake',{'goal':'Complete the verification','steps':'Enter code'},Path(directory),mcp_host_text=True)).run()
+  self.assertEqual(result['status'],'Execution error')
+  self.assertIn('verification code',result['notes'])
 
  def test_focused_sensitive_field_does_not_capture_keyboard_suggestions(self):
   device=AndroidDevice('fake');device.size=lambda:(1080,1920)
