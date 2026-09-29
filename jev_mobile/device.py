@@ -232,7 +232,7 @@ class AndroidDevice:
             operations=[]
             # TYPE_TEXT focuses editable elements itself; exposing TAP as a separate
             # choice often leaves Jev looping on the focused field instead of typing.
-            if tappable and not editable:operations.append('TAP')
+            if tappable and not editable and a.get('enabled','true')!='false':operations.append('TAP')
             if editable:operations.append('TYPE_TEXT')
             role='textbox' if editable else 'button' if 'Button' in cls else 'control'
             password=a.get('password')=='true'
@@ -307,7 +307,9 @@ class AndroidDevice:
             except ET.ParseError:
                 pass
         left,top,right,bottom=viewport
-        x=left+(right-left)//4
+        # Swipe through the center of the feed item so edge overlays or
+        # neighboring gesture regions do not consume the tutorial gesture.
+        x=left+(right-left)//2
         gesture={'start':[x,top+int((bottom-top)*.90)],'end':[x,top+int((bottom-top)*.10)],'duration_ms':300,'viewport':list(viewport),'source':source}
         self.command('shell','input','swipe',str(x),str(gesture['start'][1]),str(x),str(gesture['end'][1]),str(gesture['duration_ms']))
         return gesture
@@ -325,10 +327,16 @@ class AndroidDevice:
         return self.observe()
 
     def wait_for_content(self,timeout:float=20) -> Screen:
-        """Wait for an app splash screen to expose its first accessible content."""
+        """Wait for content and a settled accessibility hierarchy after launch."""
         deadline=time.monotonic()+max(0,timeout)
         last=self.observe()
-        while not last.text.strip() and not last.elements and time.monotonic()<deadline:
-            time.sleep(.25)
-            last=self.observe()
+        stable=0
+        while time.monotonic()<deadline:
+            time.sleep(.35)
+            current=self.observe()
+            if current.fingerprint==last.fingerprint and (current.text.strip() or current.elements):
+                stable+=1
+                if stable>=1:return current
+            else:stable=0
+            last=current
         return last

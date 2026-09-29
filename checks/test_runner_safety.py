@@ -71,6 +71,81 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual([(e.label,e.center) for e in screen.elements],[('OK',(672,1628))])
   self.assertIn(GUARD_TEXT,screen.text)
 
+ def test_disabled_save_button_is_not_exposed_as_an_action(self):
+  xml='<hierarchy><node text="Your Birthday" class="android.widget.TextView" bounds="[10,10][200,60]"/><node text="Save" class="android.widget.Button" enabled="false" clickable="true" bounds="[10,100][200,150]"/></hierarchy>'
+  device=AndroidDevice('fake');device.size=lambda:(1080,2340)
+  screen=device._parse(ET.fromstring(xml),xml)
+  save=next(element for element in screen.elements if element.label=='Save')
+  self.assertEqual(save.operations,())
+
+ def test_twomi_birthday_base_step_confirms_one_selected_value_then_saves_once(self):
+  from jev_mobile.device import Element,Screen
+  birthday=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
+  confirm=Element('2','button','Confirm','','Button','',(10,70,200,120),('TAP',),False)
+  selected=Element('3','control','Saturday, January 1, 2000','','TextView','',(10,130,200,180),('TAP',),False,checked=True,checkable=True)
+  save=Element('1','button','Save','','Button','',(10,100,200,150),('TAP',),False)
+  before=Screen('',[birthday,save],'Your Birthday · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','before',1080,2340)
+  picker=Screen('',[confirm,selected],'Select your birthday · Saturday, January 1, 2000 · Confirm','picker',1080,2340)
+  form=Screen('',[save],'Your Birthday · 2000/01/01 · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','form',1080,2340)
+  feed=Screen('',[],'Swipe up to select your companion','feed',1080,2340)
+  agent=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=True))
+  agent.device=Mock();agent.device.wait_for_change.side_effect=[picker,form,feed]
+  agent.screenshot=Mock(return_value='evidence.png')
+  result=agent._base_birthday_step(before)
+  self.assertIs(result,feed)
+  self.assertEqual(agent.device.tap.call_args_list,[unittest.mock.call(birthday),unittest.mock.call(confirm),unittest.mock.call(save)])
+  self.assertEqual([item['base_step'] for item in agent.history],[
+   'Twomi birthday: open date picker',
+   'Twomi birthday: confirm preselected date 2000-01-01',
+   'Twomi birthday: save confirmed date 2000-01-01',
+  ])
+
+ def test_twomi_birthday_base_step_runs_before_and_without_jev_decisions(self):
+  from jev_mobile.device import Element,Screen
+  birthday=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
+  confirm=Element('2','button','Confirm','','Button','',(10,70,200,120),('TAP',),False)
+  selected=Element('3','control','Saturday, January 1, 2000','','TextView','',(10,130,200,180),('TAP',),False,checked=True,checkable=True)
+  save=Element('1','button','Save','','Button','',(10,100,200,150),('TAP',),False)
+  before=Screen('',[birthday,save],'Your Birthday · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','before',1080,2340)
+  picker=Screen('',[confirm,selected],'Select your birthday · Saturday, January 1, 2000 · Confirm','picker',1080,2340)
+  form=Screen('',[save],'Your Birthday · 2000/01/01 · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','form',1080,2340)
+  feed=Screen('',[],'Twomi home feed ready','feed',1080,2340)
+  fake=Mock();fake.wait_for_content.return_value=before;fake.observe.return_value=feed;fake.foreground.return_value='com.torilab.twomi.uat';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  fake.wait_for_change.side_effect=[picker,form,feed]
+  fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
+  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value={'operation':'DONE','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}) as chooser:
+   result=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Reach the home feed'},Path(directory),expected_text='home feed ready',allow_consent=True)).run()
+  self.assertEqual(result['status'],'Passed')
+  self.assertEqual(chooser.call_count,1)
+  self.assertEqual([entry['operation'] for entry in result['steps'][1:4]],['BASE_STEP_TAP']*3)
+
+ def test_twomi_birthday_base_step_does_not_save_without_consent_authorization(self):
+  from jev_mobile.device import Element,Screen
+  field=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
+  save=Element('2','button','Save','','Button','',(10,100,200,150),('TAP',),False)
+  screen=Screen('',[field,save],'Your Birthday · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','before',1080,2340)
+  agent=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=False))
+  agent.device=Mock()
+  self.assertIsNone(agent._base_birthday_step(screen))
+  agent.device.tap.assert_not_called()
+
+ def test_twomi_birthday_base_step_stops_on_underage_preselection(self):
+  from jev_mobile.device import DeviceError,Element,Screen
+  field=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
+  selected=Element('2','control','Friday, January 1, 2016','','TextView','',(10,70,200,120),('TAP',),False,checked=True,checkable=True)
+  confirm=Element('3','button','Confirm','','Button','',(10,130,200,180),('TAP',),False)
+  before=Screen('',[field],'Your Birthday · Save','before',1080,2340)
+  picker=Screen('',[selected,confirm],'Select your birthday · Friday, January 1, 2016 · Confirm','picker',1080,2340)
+  agent=Agent(RunConfig('com.torilab.twomi.uat','fake',{'goal':'Sign in'},Path(tempfile.mkdtemp()),allow_consent=True))
+  agent.device=Mock();agent.device.wait_for_change.return_value=picker
+  with self.assertRaisesRegex(DeviceError,'under 13'):
+   agent._base_birthday_step(before)
+  agent.device.tap.assert_called_once_with(field)
+
+ def test_birthday_save_is_a_consent_action_when_screen_says_by_saving(self):
+  self.assertTrue(Agent.consent_confirmation_required('Save','By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy'))
+
  def test_notification_restore_without_existing_override_resets_only_notification_op(self):
   from subprocess import CompletedProcess
   device=AndroidDevice('fake')
@@ -93,9 +168,9 @@ class RunnerSafetyTests(unittest.TestCase):
   gesture=device.swipe_companion_next_item(1080,2340,screen)
   self.assertEqual(gesture['viewport'],[0,0,1080,1721])
   self.assertEqual(gesture['source'],'accessibility_scrollable_bounds')
-  self.assertEqual(gesture['start'],[270,1548])
-  self.assertEqual(gesture['end'],[270,172])
-  device.command.assert_called_once_with('shell','input','swipe','270','1548','270','172','300')
+  self.assertEqual(gesture['start'],[540,1548])
+  self.assertEqual(gesture['end'],[540,172])
+  device.command.assert_called_once_with('shell','input','swipe','540','1548','540','172','300')
 
  def test_tutorial_swipe_without_bounds_avoids_bottom_navigation(self):
   device=AndroidDevice('fake');device.command=Mock()
@@ -127,9 +202,18 @@ class RunnerSafetyTests(unittest.TestCase):
   device=AndroidDevice('fake')
   blank=Screen('<hierarchy/>',[],'','blank',1080,1920)
   ready=Screen('<hierarchy/>',[],'Welcome','ready',1080,1920)
-  device.observe=Mock(side_effect=[blank,ready])
+  device.observe=Mock(side_effect=[blank,ready,ready])
   with patch('jev_mobile.device.time.sleep'):
    self.assertIs(device.wait_for_content(.5),ready)
+
+ def test_startup_discards_stale_profile_hierarchy_until_new_screen_is_stable(self):
+  from jev_mobile.device import Screen
+  device=AndroidDevice('fake')
+  stale=Screen('<hierarchy/>',[],'Edit · Username','stale-profile',1080,2340)
+  welcome=Screen('<hierarchy/>',[],'Welcome to Twomi · Continue','welcome',1080,2340)
+  device.observe=Mock(side_effect=[stale,welcome,welcome])
+  with patch('jev_mobile.device.time.sleep'):
+   self.assertIs(device.wait_for_content(.5),welcome)
 
  def test_model_choice_cannot_name_unobserved_target(self):
   answer={'choice':'2','confidence':.9,'probabilities':{'1':.1,'2':.9}}
