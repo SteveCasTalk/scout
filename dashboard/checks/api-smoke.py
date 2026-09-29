@@ -16,9 +16,10 @@ def call(path,body=None,method=None,expected=200,headers=None,raw=None):
     data=r.read()
     assert r.status==expected,(path,r.status,data)
     return json.loads(data) if 'application/json' in r.headers.get('Content-Type','') else data
-c={'project':'Arcana','app_id':'com.example.arcana','title':'[Dashboard verification] Invalid sign-in','platform':'Android','suite':'Dashboard verification','goal':'Verify a rejected login','preconditions':'Synthetic dashboard data only; no device execution','steps':'Open sign in\nEnter invalid credentials\nSubmit','expected':'Error appears'}
+workspace=call('/api/workspaces',{'name':'[Dashboard verification] '+uuid.uuid4().hex[:8]},'POST',201)
+c={'workspace_id':workspace['id'],'project':'Arcana','app_id':'com.example.arcana','title':'[Dashboard verification] Invalid sign-in','platform':'Android','suite':'Dashboard verification','goal':'Verify a rejected login','preconditions':'Synthetic dashboard data only; no device execution','steps':'Open sign in\nEnter invalid credentials\nSubmit','expected':'Error appears'}
 created=call('/api/cases',c,'POST',201)
-assert created['project']=='Arcana' and created['app_id']=='com.example.arcana'
+assert created['project']=='Arcana' and created['app_id']=='com.example.arcana' and created['workspace_id']==workspace['id']
 call('/api/cases',{**c,'title':' '},'POST',400)
 r=call('/api/runs',{'caseId':created['id'],'revision':1,'status':'Inconclusive','build':'synthetic-1','device':'No device — dashboard check','notes':'Synthetic API verification. This is not a mobile test result.'},'POST',201)
 updated=call('/api/cases',{**created,'expected':'Revised expectation'},'PUT')

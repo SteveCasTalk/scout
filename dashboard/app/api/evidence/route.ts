@@ -2,7 +2,7 @@ import { context, failure, HttpError, bucket } from '@/lib/server';
 const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'video/mp4', 'video/webm', 'text/plain', 'application/json']);
 export async function GET(request: Request) { try {
     const { db, owner } = await context(request);
-    const { results } = await db.prepare('SELECT id,run_id,name,mime,size,created FROM evidence WHERE owner=? ORDER BY created DESC').bind(owner).all();
+    const { results } = await db.prepare('SELECT evidence.id,evidence.run_id,evidence.name,evidence.mime,evidence.size,evidence.created,runs.workspace_id FROM evidence JOIN runs ON runs.id=evidence.run_id AND runs.owner=evidence.owner WHERE evidence.owner=? ORDER BY evidence.created DESC').bind(owner).all();
     return Response.json(results);
 }
 catch (e) {

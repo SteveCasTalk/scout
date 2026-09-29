@@ -1,8 +1,8 @@
 # Jev Mobile dashboard
 
-Private workspace for Android/iOS test cases, manual results, imported Jev Android runner results, and evidence.
+Workspace-based dashboard for Android/iOS test cases, manual results, imported Jev Android runner results, and evidence. Create a workspace per app, team, or environment; switching workspaces scopes the case library, run history, and evidence together. Existing records are migrated into workspaces named after their current project labels, including orphaned historical runs using their saved report snapshot.
 
-Create cases with a project name, Android package or iOS bundle ID, goals, steps, expected results, and an optional exact visible-text assertion. Filter cases and reports by project (for example, Arcana or AI Avatar). Export a case to `jev_mobile`, then import the runner's `result.json` into Test runs. Prompt-driven MCP runs are synced from the local bridge into the dashboard with their artifacts, without requiring a saved case first. The dashboard stores each run's test revision and action timeline. Expand a Jev decision to inspect its request questions, selected answers, option probabilities, confidence, model, latency, and request/response JSON. The runner also writes `jev-output.json` for standalone analysis. Attach screenshots, videos, or logs to the run; uploads are limited to 25 MB per file.
+Create a workspace for an app, team, or environment, then keep its cases, runs, and evidence in that space. Use project labels to group work further inside a workspace. Add an Android package or iOS bundle ID, goals, steps, expected results, and an optional exact visible-text assertion to each case. Export a case to `jev_mobile`, then import the runner's `result.json` into Test runs. Prompt-driven MCP runs are synced from the local bridge into the dashboard with their artifacts, without requiring a saved case first. The dashboard stores each run's test revision and action timeline. Expand a Jev decision to inspect its request questions, selected answers, option probabilities, confidence, model, latency, and request/response JSON. The runner also writes `jev-output.json` for standalone analysis. Attach screenshots, videos, or logs to the run; uploads are limited to 25 MB per file.
 
 The dashboard does not directly control a USB device. The Android runner is local and described in the [workspace README](../README.md). The installed AI Avatar UAT build currently rejects the emulator before its authentication screen, so there is no verified login test yet.
 
@@ -29,10 +29,12 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_famous_living_lightning.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_projects_and_prompt_runs.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_project_app_ids.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_clammy_mysterio.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_brown_callisto.sql
 npm run dev
 ```
 
-Apply each migration only once to a local database. Existing checkouts need only migrations they have not already applied. Migration `0002_projects_and_prompt_runs.sql` adds project labels and MCP-run deduplication; `0003_project_app_ids.sql` adds the Android package or iOS bundle ID per case. The bundled local sign-in route creates a development identity; production identity is supplied by the hosting platform.
+Apply each migration only once to a local database. Existing checkouts need only migrations they have not already applied. Migration `0002_projects_and_prompt_runs.sql` adds project labels and MCP-run deduplication; `0003_project_app_ids.sql` adds the Android package or iOS bundle ID per case; `0004_clammy_mysterio.sql` adds workspaces and groups existing records by project label; `0005_brown_callisto.sql` adds workspace lookup indexes. The bundled local sign-in route creates a development identity; production identity is supplied by the hosting platform.
 
 ```sh
 npx tsc --noEmit
