@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Minus, Plus, RotateCcw, Scan } from 'lucide-react';
 import Image from 'next/image';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import type { Evidence, Run } from '@/lib/contracts';
 
 type FlowNode = { step: number; operation: string; label?: string | null; elapsed?: number; file: Evidence };
-const CARD_W = 258;
-const CARD_H = 224;
+const CARD_W = 320;
+const DEFAULT_RATIO = 2340 / 1080;
 const GAP_X = 112;
 const GAP_Y = 104;
 const PAD = 44;
@@ -17,6 +18,7 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
     const viewport = useRef<HTMLDivElement>(null);
     const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
     const [view, setView] = useState({ x: 28, y: 28, scale: 0.8 });
+    const [ratios, setRatios] = useState<Record<string, number>>({});
     const [selected, setSelected] = useState<FlowNode | null>(null);
     const nodes = useMemo(() => {
         const images = new Map(files.filter(file => file.mime.startsWith('image/')).map(file => [file.name, file]));
@@ -34,6 +36,7 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
         }
         return linked;
     }, [files, run.trace]);
+    const CARD_H = Math.max(DEFAULT_RATIO, ...Object.values(ratios)) * CARD_W + 100;
     const rows = Math.ceil(nodes.length / COLUMNS);
     const width = PAD * 2 + COLUMNS * CARD_W + (COLUMNS - 1) * GAP_X;
     const height = PAD * 2 + Math.max(1, rows) * CARD_H + Math.max(0, rows - 1) * GAP_Y;
@@ -48,14 +51,7 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
         const scale = Math.min(1, (bounds.width - 40) / width, (bounds.height - 40) / height);
         setView({ x: (bounds.width - width * scale) / 2, y: (bounds.height - height * scale) / 2, scale: Math.max(0.05, scale) });
     }, [height, width]);
-    useEffect(() => { requestAnimationFrame(fit); }, [run.id, fit]);
-    useEffect(() => {
-        const element = viewport.current;
-        if (!element) return;
-        const observer = new ResizeObserver(fit);
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, [fit]);
+    useEffect(() => { setView({ x: 12, y: 12, scale: .7 }); }, [run.id]);
     function changeScale(factor: number) { setView(current => ({ ...current, scale: Math.max(0.05, Math.min(1.8, current.scale * factor)) })); }
     function startPan(event: React.PointerEvent<HTMLDivElement>) {
         if ((event.target as HTMLElement).closest('[data-flow-card]')) return;
@@ -90,11 +86,11 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
                     return <path key={index} d={path} fill="none" stroke="#89ae9d" strokeWidth="2.5" markerEnd="url(#flow-arrow)"/>;
                 })}</svg>
                 {nodes.map((node, index) => { const point = coords[index]; return <button type="button" data-flow-card className={`flow-card ${selected?.file.id === node.file.id ? 'active' : ''}`} key={node.file.id} style={{ left: point.x, top: point.y, width: CARD_W }} onClick={() => setSelected(node)}>
-                    <div className="flow-card-image"><Image unoptimized width={258} height={142} src={`/api/evidence/${node.file.id}`} alt={`Screenshot for step ${node.step}`}/><span>STEP {String(node.step + 1).padStart(2, '0')}</span></div>
+                    <div className="flow-step-label">STEP {String(node.step + 1).padStart(2, '0')}</div><div className="flow-card-image"><Image unoptimized width={320} height={Math.round(CARD_W * (ratios[node.file.id] || DEFAULT_RATIO))} onLoad={event => { const img = event.currentTarget; const ratio = img.naturalHeight / img.naturalWidth; if (ratio > 0) setRatios(old => old[node.file.id] === ratio ? old : { ...old, [node.file.id]: ratio }); }} src={`/api/evidence/${node.file.id}`} alt={`Screenshot for step ${node.step}`}/></div>
                     <div className="flow-card-meta"><b>{node.operation.replaceAll('_', ' ')}</b><small>{node.label || node.file.name}</small><small>{node.elapsed == null ? node.file.name : `${(node.elapsed / 1000).toFixed(1)}s · ${node.file.name}`}</small></div>
                 </button>; })}
             </div> : <div className="flow-empty"><b>No captured images in this run</b><span>Import or attach screenshots to see the execution flow here.</span></div>}
         </div>
-        {selected && <div className="flow-inspector"><div><b>Step {selected.step + 1} · {selected.operation.replaceAll('_', ' ')}</b><span>{selected.label || selected.file.name}{selected.elapsed == null ? '' : ` · ${(selected.elapsed / 1000).toFixed(1)}s`}</span></div><button type="button" onClick={() => setSelected(null)}>Close</button><Image unoptimized width={1080} height={1920} src={`/api/evidence/${selected.file.id}`} alt={selected.label || `Step ${selected.step + 1} screenshot`}/></div>}
+        <Dialog open={!!selected} onOpenChange={open => { if (!open) setSelected(null); }}><DialogContent className="flow-image-dialog">{selected && <><DialogTitle>Step {selected.step + 1} · {selected.operation.replaceAll('_', ' ')}</DialogTitle><DialogDescription>{selected.label || selected.file.name}</DialogDescription><img src={`/api/evidence/${selected.file.id}`} alt={`Full screenshot for step ${selected.step + 1}`}/><a href={`/api/evidence/${selected.file.id}`} target="_blank" rel="noreferrer">Open original image</a></>}</DialogContent></Dialog>
     </div>;
 }
