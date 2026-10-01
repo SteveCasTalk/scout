@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import shutil
 import socket
@@ -23,10 +24,10 @@ _LOCK = RLock()
 
 def _dashboard_ready(port: int) -> bool:
     try:
-        with urlopen(f"http://127.0.0.1:{port}/", timeout=0.7) as response:
-            page = response.read(256_000).decode("utf-8", errors="ignore").lower()
-        return "jev mobile" in page and response.status < 400
-    except (OSError, URLError, TimeoutError):
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.7) as response:
+            data = json.loads(response.read(4096))
+        return isinstance(data, dict) and data.get("service") == "jev-dashboard" and data.get("status") == "ready"
+    except (OSError, URLError, TimeoutError, ValueError):
         return False
 
 
@@ -78,6 +79,10 @@ def ensure_dashboard() -> tuple[str, str | None]:
     if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1"}:
         return (configured or DEFAULT_URL), None
 
+    # Start the bridge independently: dashboard sign-in/build readiness must not
+    # prevent local runs from being available for sync.
+    (ROOT / "runner-output").mkdir(parents=True, exist_ok=True)
+    initial_bridge_error = _ensure_bridge()
     base_url = f"http://127.0.0.1:{preferred_port}"
     if _dashboard_ready(preferred_port):
         errors = []
@@ -113,13 +118,13 @@ def ensure_dashboard() -> tuple[str, str | None]:
     except OSError as exc:
         return base_url, f"Could not start the dashboard: {type(exc).__name__}."
 
-    deadline = time.monotonic() + 12
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         if _dashboard_ready(port):
             bridge_error = _ensure_bridge()
             return base_url, bridge_error
         time.sleep(0.25)
-    return base_url, "Dashboard server did not become ready; see runner-output/jev-dashboard.log."
+    return base_url, "; ".join(filter(None, ["Dashboard server did not become ready; see runner-output/jev-dashboard.log.", initial_bridge_error]))
 
 
 def _ensure_bridge() -> str | None:

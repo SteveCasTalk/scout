@@ -12,7 +12,8 @@ import time
 from threading import Lock, RLock
 import zipfile
 from io import BytesIO
-from typing import Any
+from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
 from urllib.parse import quote
 
 from mcp.server.fastmcp import FastMCP
@@ -23,6 +24,7 @@ from .config import ROOT, load_local_env
 from .dashboard_runtime import ensure_dashboard
 from .device import AndroidDevice
 from .validation import validate_prompt_steps
+from .checkpoints import validate_checkpoints
 
 
 mcp = FastMCP("Jev Mobile")
@@ -83,6 +85,7 @@ def _mcp_agent_response(
             "case_title": title,
             "next_tool": "enter_text",
             "text_request": result["text_request"],
+            "checkpoint_results": list(agent.checkpoint_verdicts.values()),
             "screenshot": result.get("screenshot"),
             "expires_in_seconds": PENDING_MCP_RUN_TTL,
         }
@@ -94,6 +97,7 @@ def _mcp_agent_response(
         "status": result["status"],
         "notes": result["notes"],
         "verification": result["verification"],
+        "checkpoint_results": result.get("checkpoint_results", []),
         "run_directory": str(agent.output),
         "result_file": str(agent.output / "result.json"),
         "trace_file": str(agent.output / "trace.json"),
@@ -231,6 +235,46 @@ def run_android_test(
     return _mcp_agent_response(agent, result, project=str(case.get("project", "General")), title=str(case.get("title", "")), prompt_run=False)
 
 
+class CheckpointInput(BaseModel):
+    """One independently observable acceptance criterion."""
+    model_config = ConfigDict(extra='forbid', strict=True)
+    id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,40}$', description='Unique stable checkpoint identifier.')
+    expected: str = Field(min_length=1, max_length=1000, description='Observable expectation, or literal text for text methods.')
+    scope: Literal['during_run', 'final'] = Field(description='At least once during execution, or only the final observation.')
+    required: bool = Field(description='Whether this checkpoint must be satisfied for the case to pass.')
+    method: Literal['classification', 'text_present', 'text_absent']
+
+
+@mcp.tool()
+def get_test_case_template() -> dict[str, Any]:
+    """Read before authoring a test. Canonical MCP input template and verification contract."""
+    return {
+        "version": 1,
+        "rules": [
+            "Explore the application before writing navigation steps; do not invent screens or selectors.",
+            "Map each acceptance criterion to an observable checkpoint; max 12 unique IDs, at least one required.",
+            "during_run means observed at least once; final means final observation only. Neither means always true.",
+            "classification uses screen text and accessibility control states, not pixels or backend access.",
+            "text_present/text_absent perform case-insensitive substring checks; avoid generic words.",
+            "Missing text on the wrong screen does not establish a bug. Use contextual classification when needed.",
+            "Do not claim UI evidence proves backend-only or visual-pixel requirements.",
+            "Include user-approved ordinary input in steps. Keep credentials in local configuration.",
+            "A classification requires step evidence and decision/evidence confidence >=0.85; otherwise unknown.",
+            "Checkpoints determine the outcome when supplied; assertion_text is the legacy fallback.",
+        ],
+        "input": {
+            "title": "Login reaches account settings", "project": "Custom Avatar", "suite": "Authentication", "preconditions": "App installed; signed out; test credentials configured locally.", "ticket_key": "", "package": "com.example.uat",
+            "goal": "Verify a valid account can access account settings after login.",
+            "steps": "Open the observed login entry\nEnter configured credentials\nSubmit login\nOpen account settings",
+            "expected": "Login is accepted and account settings is visible.",
+            "checkpoints": [
+                {"id": "login_form", "expected": "A login form with email and password fields is visible.", "scope": "during_run", "required": True, "method": "classification"},
+                {"id": "account_screen", "expected": "Account settings is visible with account management controls after login.", "scope": "final", "required": True, "method": "classification"},
+            ],
+        },
+    }
+
+
 @mcp.tool()
 def run_android_test_from_prompt(
     goal: str,
@@ -246,9 +290,17 @@ def run_android_test_from_prompt(
     test_password: str = "",
     project: str = "General",
     allow_consent: bool = False,
+    checkpoints: list[CheckpointInput] | None = None,
+    suite: str = "Prompt runs",
+    preconditions: str = "",
+    ticket_key: str = "",
 ) -> dict[str, Any]:
     """Run an Android test from the user's prompt. If Jev needs ordinary text, this returns `awaiting_input`; the assistant must choose only text requested by the user and call `enter_text` with the returned run_id.
 
+    Call get_test_case_template before defining a new case. Map acceptance criteria to checkpoints:
+    id, expected, scope (during_run/final), required (boolean), method (classification/text_present/text_absent).
+    During-run means a condition occurs at least once, not an invariant. Final means only the final observation.
+    Use observable expectations, never infer hidden backend success from UI navigation.
     The assistant should translate the user's prompt into a concise goal, ordered steps, and expected outcome. For a read-only check of the current screen, empty steps are allowed when `assertion_text` is supplied; that skips navigation decisions.
     For projects other than General or AI Avatar, provide the app package ID or first use search_android_packages.
     Credentials may be supplied for this run or loaded from local .env. They are used only by the local device runner,
@@ -282,7 +334,14 @@ def run_android_test_from_prompt(
         raise ValueError("package must be a valid Android application ID.")
     if len(assertion_text) > 240:
         raise ValueError("assertion_text must be at most 240 characters.")
-    validate_prompt_steps(goal, steps, assertion_text)
+    if not isinstance(suite, str) or not suite.strip() or len(suite) > 80:
+        raise ValueError("suite must contain 1–80 characters.")
+    if len(preconditions) > 4000 or len(ticket_key) > 40:
+        raise ValueError("preconditions or ticket_key exceeds its size limit.")
+    checkpoints = validate_checkpoints([item.model_dump() if isinstance(item, CheckpointInput) else item for item in checkpoints] if checkpoints is not None else None)
+    if not checkpoints and not assertion_text:
+        raise ValueError('Provide checkpoints using get_test_case_template, or a legacy assertion_text.')
+    validate_prompt_steps(goal, steps, assertion_text or ('checkpoint verification' if checkpoints else ''))
     if len(test_email) > 254 or len(test_password) > 200:
         raise ValueError("test_email or test_password exceeds the supported length.")
     if test_email and "@" not in test_email:
@@ -303,6 +362,8 @@ def run_android_test_from_prompt(
         "steps": steps,
         "expected": expected,
         "assertion_text": assertion_text,
+        "checkpoints": checkpoints,
+        "suite": suite.strip(), "preconditions": preconditions, "ticket_key": ticket_key.strip().upper(),
     }
     output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     agent = Agent(

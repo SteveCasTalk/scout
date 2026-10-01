@@ -11,6 +11,7 @@ import threading
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .agent import Agent, RunConfig
+from . import dashboard_jobs
 from .config import ROOT, load_local_env
 from .device import AndroidDevice
 
@@ -64,6 +65,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(403, {"error": "Origin is not allowed."})
             return
         parsed = urlsplit(self.path)
+        job_match = re.fullmatch(r"/jobs/([A-Za-z0-9_-]{1,80})", parsed.path)
+        if job_match:
+            job = dashboard_jobs.snapshot(job_match.group(1))
+            self._json(200 if job else 404, job or {"error": "Run session not found. The bridge may have restarted."})
+            return
         if parsed.path == "/health":
             self._json(200, {"status": "ready"})
             return
@@ -126,7 +132,27 @@ class Handler(BaseHTTPRequestHandler):
         if not self._browser_request_allowed():
             self._json(403, {"error": "Origin is not allowed."})
             return
-        if urlsplit(self.path).path != "/run":
+        path = urlsplit(self.path).path
+        if path == "/jobs" or re.fullmatch(r"/jobs/[A-Za-z0-9_-]{1,80}/(input|stop)", path):
+            try:
+                length = self.headers.get("Content-Length", "")
+                if not length.isdigit() or int(length) > MAX_BODY:
+                    raise ValueError("Request must contain at most 1 MB of JSON.")
+                payload = json.loads(self.rfile.read(int(length)))
+                if not isinstance(payload, dict):
+                    raise ValueError("Expected a JSON object.")
+                if path == "/jobs":
+                    job_id = dashboard_jobs.start(payload, RUN_LOCK)
+                    self._json(202, {"run_id": job_id})
+                else:
+                    dashboard_jobs.respond(path.split('/')[2], payload.get('text'), path.endswith('/stop'))
+                    self._json(200, {"accepted": True})
+            except (ValueError, UnicodeDecodeError) as exc:
+                self._json(400, {"error": str(exc)[:300]})
+            except Exception as exc:
+                self._json(500, {"error": f"Could not start run: {type(exc).__name__}"})
+            return
+        if path != "/run":
             self._json(404, {"error": "Not found."})
             return
         if not RUN_LOCK.acquire(blocking=False):

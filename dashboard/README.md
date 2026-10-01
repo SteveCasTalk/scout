@@ -32,6 +32,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_clammy_mysterio.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_brown_callisto.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_canvas_ticket_keys.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_verification_checkpoints.sql
 npm run dev
 ```
 
@@ -51,3 +52,36 @@ The API smoke check creates labeled synthetic records in the local development d
 - `lib/contracts.ts`: shared validation and types.
 - `db/schema.ts` and `drizzle/`: database schema and migrations.
 - `.openai/hosting.json`: logical hosting and storage declarations.
+
+## Sign-in or sync problems on another machine
+
+For a local dashboard use `npm run dev` and open `http://localhost:5173` on the same machine as Jev. The local **Sign in with ChatGPT** route creates the bundled development identity; it does not require a real ChatGPT account. Use the same hostname consistently because `localhost` and `127.0.0.1` have separate sign-in cookies. `npm start` serves the worker build and does not install the development sign-in middleware.
+
+If the runner shows offline, start `python3 -m jev_mobile.local_server` from the repository root on that machine, then use **Test cases → Sync MCP runs**. The bridge reads that checkout's `runner-output`, not runs stored on another computer. Fresh checkouts also need the local database migrations listed above and a workspace before importing runs. Hosted dashboards cannot reach this loopback-only bridge through the local development workflow.
+
+Dashboard readiness uses `/api/health`, independently of sign-in. MCP starts the bridge even while the dashboard is starting, and report links preserve their run ID through sign-in.
+
+### Suites, live execution, comparison, and bug drafts
+
+- **Test cases** is the combined case and suite library. It groups by project and suite by default; use **Group by → Jira ticket** to switch grouping. **Organize suites** exposes case selection and assignment controls. **Run suite** runs the entire named suite, including cases hidden by filters. Select cases and enter a suite name to move them, or create a case in a suite. Jira keys remain optional. Membership edits create a new case revision; old run snapshots are unchanged.
+- **Run again / Run suite** opens a setup dialog. Choose an authorized Android serial, review every case's preconditions, arrange suite execution order, and choose existing app state or force-stop/relaunch. Relaunch preserves app data and login. All selected cases need their Android package ID. Suites stop on the first non-passing outcome.
+- The local bridge exposes `POST /jobs`, `GET /jobs/:id`, `POST /jobs/:id/input`, and `POST /jobs/:id/stop`. Jobs run in background threads under the existing dashboard execution lock. Progress includes completed actions and the latest agent-approved screenshot; credential screens can be withheld. Stop takes effect at the next action boundary. Ordinary text requests pause for user input and expire after 15 minutes. Credentials stay in the existing local runner configuration.
+- The browser stores its active queue in session storage and resumes polling after a reload in the same tab. Final results and recordings are imported through the existing authenticated dashboard APIs. A completed result can be recovered after a bridge restart; an interrupted in-memory agent cannot resume. Keep the dashboard tab open to advance a suite and sync results.
+- **Compare runs** is available from a run header. Choose another saved run of the same case and independently select the captured steps to compare. This is visual side-by-side comparison, not automatic image-difference scoring.
+- **Draft bug report** is available on non-passing runs. Choose a captured step, regenerate and edit the draft, then copy or download Markdown. Evidence downloads are provided separately for Jira attachment. No Jira issue is created automatically.
+- Restart `python3 -m jev_mobile.local_server` after updating Python bridge code; the Vite UI refreshes independently.
+
+
+### Checkpoint verification and Insight
+
+Cases accept up to 12 checkpoints. Each has a unique `id`, observable `expected`, `scope` (`during_run` or `final`), `required` boolean, and `method` (`classification`, `text_present`, `text_absent`). At least one checkpoint must be required. Define them in the case editor; they persist in case revisions, JSON exports, and run snapshots. Old cases retain their legacy assertion behavior.
+
+- `during_run` is an occurrence checkpoint: evaluate as observations arrive and retain the first supported satisfied/violated decision. It is not a continuously enforced invariant. Transient captured evidence can satisfy it before leaving a screen.
+- `final` evaluates only the final observation, when the navigation agent reports DONE (or a read-only verification runs).
+- Jev classification selects a verdict and a supporting observed step. The request includes the explicit expectation and up to eight recent observations; final checkpoints only receive the last one. Evidence includes redacted accessibility text/control state, not screenshot pixels or server-side state. A supported satisfied/violated decision needs both answer and evidence confidence at least 0.85. This is an operational threshold, not calibrated certainty.
+- Literal checks are case-insensitive substring checks. Empty screen text is unknown. An unmatched during-run literal checkpoint stays not reached until final evaluation.
+- Required violations produce Failed; all required checkpoints must be satisfied for Passed at normal completion. Missing/ambiguous/unreached requirements yield Inconclusive. Execution errors retain their outcome and checkpoint evidence. Optional checkpoints do not decide overall pass/fail.
+- Reports include verdict, expected behavior, confidence/method, reason, observed data, and referenced trace steps. Screenshot links appear when a captured artifact exists. Credential screenshot restrictions remain in effect. The final trace event `VERIFY_CHECKPOINTS` carries the structured report.
+- Insight shows the latest run per case. Required checkpoint violations are **possible bugs**, not confirmed defects; missing evidence is a verification gap. Old failures stay in a separate legacy category. Existing runs are not retroactively classified.
+
+MCP callers should call `get_test_case_template` before authoring tests. `run_android_test_from_prompt` exposes a typed checkpoint schema plus suite, preconditions, and ticket key. New calls need checkpoints or a legacy text assertion. Explore the app, map each acceptance criterion to an observable expectation, and avoid inventing evidence for backend-only or pixel-only requirements. Checkpoints take precedence over `assertion_text` when provided. Restart/reload the MCP server to publish the updated tool schema.

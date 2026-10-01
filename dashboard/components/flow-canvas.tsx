@@ -51,7 +51,15 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
         const scale = Math.min(1, (bounds.width - 40) / width, (bounds.height - 40) / height);
         setView({ x: (bounds.width - width * scale) / 2, y: (bounds.height - height * scale) / 2, scale: Math.max(0.05, scale) });
     }, [height, width]);
-    useEffect(() => { setView({ x: 12, y: 12, scale: .7 }); }, [run.id]);
+    const resetView = useCallback(() => {
+        const bounds = viewport.current?.getBoundingClientRect();
+        if (!bounds) return;
+        const visibleColumns = Math.min(3, Math.max(1, nodes.length));
+        const rowWidth = PAD * 2 + visibleColumns * CARD_W + (visibleColumns - 1) * GAP_X;
+        const scale = Math.max(.15, Math.min(.7, (bounds.width - 24) / rowWidth, (bounds.height - 24) / (CARD_H + PAD * 2)));
+        setView({ x: 12, y: 12, scale });
+    }, [nodes.length, CARD_H]);
+    useEffect(() => { resetView(); }, [run.id, resetView]);
     function changeScale(factor: number) { setView(current => ({ ...current, scale: Math.max(0.05, Math.min(1.8, current.scale * factor)) })); }
     function startPan(event: React.PointerEvent<HTMLDivElement>) {
         if ((event.target as HTMLElement).closest('[data-flow-card]')) return;
@@ -70,7 +78,7 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
                 <span>{Math.round(view.scale * 100)}%</span>
                 <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => changeScale(1.18)}><Plus size={15}/></button>
                 <button type="button" aria-label="Fit flow" title="Fit flow" onClick={fit}><Scan size={15}/></button>
-                <button type="button" aria-label="Reset canvas" title="Reset canvas" onClick={() => setView({ x: 28, y: 28, scale: .8 })}><RotateCcw size={14}/></button>
+                <button type="button" aria-label="Reset canvas" title="Reset canvas" onClick={resetView}><RotateCcw size={14}/></button>
             </div>
         </div>
         <div ref={viewport} className="flow-viewport" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onWheel={event => { if (event.ctrlKey || event.metaKey) { event.preventDefault(); changeScale(event.deltaY < 0 ? 1.08 : .92); } }}>

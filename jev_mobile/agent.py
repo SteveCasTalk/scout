@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 from .config import ROOT
 from .device import AndroidDevice, DeviceError, Element, Screen
 from .model import ModelError, choose, field_text
+from .checkpoints import validate_checkpoints, evaluate as evaluate_checkpoints
 
 GUARD_TEXT='This application is not supported on rooted devices or emulators.'
 RISKY=re.compile(r'\b(?:pay|purchase|buy|transfer|delete account|subscribe|withdraw)\b',re.I)
@@ -39,12 +40,17 @@ class RunConfig:
     test_password:str=''
     allow_consent:bool=False
     mcp_host_text:bool=False
+    on_progress:Callable[[list[dict[str,Any]]],None]|None=None
+    should_stop:Callable[[],bool]|None=None
 
 class Agent:
     def __init__(self,config:RunConfig):
         self.config=config
         self.device=AndroidDevice(config.serial,config.adb)
         self.history:list[dict[str,Any]]=[]
+        self.checkpoints=validate_checkpoints(config.test_case.get('checkpoints', []))
+        self.checkpoint_observations=[]
+        self.checkpoint_verdicts={item['id']:{**item,'verdict':'not_reached','confidence':0.0,'reason':'Checkpoint has not been evaluated.','evidence_steps':[],'observed':''} for item in self.checkpoints}
         self.started=time.monotonic()
         self.credential_used=False
         self.instruction_swipe_attempted=False
@@ -55,6 +61,8 @@ class Agent:
         self.test_email=config.test_email or os.getenv('JEV_TEST_EMAIL','')
         self.test_password=config.test_password or os.getenv('JEV_TEST_PASSWORD','')
         self.secrets=[s for s in (self.test_email,self.test_password) if s]
+        self.checkpoints=self.redact_object(self.checkpoints)
+        self.checkpoint_verdicts=self.redact_object(self.checkpoint_verdicts)
         self._continuation=None
         self._pending_text=False
         self._pause_started:float|None=None
@@ -219,14 +227,39 @@ class Agent:
 
     def write_result(self,status:str,reason:str,screen:Screen|None)->dict[str,Any]:
         case=self.config.test_case
-        result={'schema_version':1,'source':'Jev Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':'Android','device':self.config.serial,'build':self.device.command('shell','dumpsys','package',self.config.package,check=False).stdout.decode(errors='replace').split('versionName=',1)[-1].splitlines()[0][:120] if self.device.installed(self.config.package) else 'unknown','status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False}
+        if self.checkpoints:
+            if status!='Execution error' and (status=='Passed' or self.checkpoint_outcome()=='Failed'):status=self.checkpoint_outcome()
+            reason=reason+' Checkpoints: '+', '.join(item['id']+'='+item['verdict'] for item in self.checkpoint_verdicts.values())
+            self.history.append({'step':max((item['step'] for item in self.history),default=-1)+1,'elapsed_ms':self.elapsed_ms(),'operation':'VERIFY_CHECKPOINTS','checkpoint_results':list(self.checkpoint_verdicts.values()),'screenshot':None})
+        result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Jev Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':'Android','device':self.config.serial,'build':self.device.command('shell','dumpsys','package',self.config.package,check=False).stdout.decode(errors='replace').split('versionName=',1)[-1].splitlines()[0][:120] if self.device.installed(self.config.package) else 'unknown','status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False}
         (self.output/'result.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         (self.output/'trace.json').write_text(json.dumps(self.history,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         jev_calls=[{'step':entry['step'],**entry['jev']} for entry in self.history if 'jev' in entry]
         (self.output/'jev-output.json').write_text(json.dumps({'schema_version':1,'source':'Jev decision audit','case_id':case.get('id'),'device':self.config.serial,'calls':jev_calls},indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         return result
 
+    def assess_checkpoints(self,screen:Screen,step:int,final:bool=False)->None:
+        if not self.checkpoints:return
+        observation={'step':step,'text':self.redact(screen.text)[:8000], 'elements':self.public_screen(screen)['elements'][:40]}
+        self.checkpoint_observations.append(observation)
+        self.checkpoint_observations=self.checkpoint_observations[-8:]
+        active=[item for item in self.checkpoints if not (item['scope']=='during_run' and self.checkpoint_verdicts[item['id']]['verdict'] in {'satisfied','violated'})]
+        try:
+            results=evaluate_checkpoints(active,self.checkpoint_observations,self.redact(str(self.config.test_case.get('goal',''))),final)
+        except ModelError as exc:
+            results=[{**item,'verdict':'not_observable','confidence':0.0,'reason':self.redact(str(exc)),'evidence_steps':[],'observed':''} for item in active if final or item['scope']=='during_run']
+        for result in results:self.checkpoint_verdicts[result['id']]=self.redact_object(result)
+
+    def checkpoint_outcome(self)->str:
+        required=[value for value in self.checkpoint_verdicts.values() if value['required']]
+        if any(value['verdict']=='violated' for value in required):return 'Failed'
+        if required and all(value['verdict']=='satisfied' for value in required):return 'Passed'
+        return 'Inconclusive'
+
     def verify_result(self,screen:Screen,step:int,timings_ms:dict[str,int]|None=None)->bool:
+        if self.checkpoints:
+            self.verify_checkpoint_final(screen,step)
+            return self.checkpoint_outcome()=='Passed'
         expected=self.config.expected_text.strip()
         observed=self.redact(screen.text)[:8000]
         matched=bool(expected and expected.casefold() in screen.text.casefold())
@@ -238,6 +271,12 @@ class Agent:
         phases['screenshot_ms']=round((time.perf_counter()-started)*1000)
         self.history.append({'step':step,'elapsed_ms':self.elapsed_ms(),'operation':'VERIFY_RESULT','verification':self.verification.copy(),'screen':self.public_screen(screen),'screenshot':screenshot,'timings_ms':phases})
         return matched
+
+    def verify_checkpoint_final(self,screen:Screen,step:int)->None:
+        self.history.append({'step':step,'elapsed_ms':self.elapsed_ms(),'operation':'VERIFY_RESULT','screen':self.public_screen(screen),'screenshot':self.screenshot(screen,step)})
+        self.assess_checkpoints(screen,step,True)
+        self.verification={'status':self.checkpoint_outcome().lower(),'method':'checkpoint_evidence','expected_text':'; '.join(item['expected'] for item in self.checkpoints if item['required'])[:8000],'observed_text':self.redact(screen.text)[:8000]}
+        self.history[-1]['verification']=self.verification.copy()
 
     def run(self)->dict[str,Any]:
         if self._continuation is not None:
@@ -279,6 +318,8 @@ class Agent:
             initial=self.screenshot(screen,0)
             initial_screenshot_ms=round((time.perf_counter()-screenshot_started)*1000)
             self.history.append({'step':0,'elapsed_ms':self.elapsed_ms(),'operation':'OBSERVE','screen':self.public_screen(screen),'screenshot':initial,'timings_ms':{'launch_ms':launch_ms,'wait_for_content_ms':wait_for_content_ms,'content_wait':self.device_timing_details('last_content_wait_timings'),'screenshot_ms':initial_screenshot_ms,'last_observation':self.device_timing_details('last_observation_timings')}})
+            self.assess_checkpoints(screen,0)
+            if self.config.on_progress:self.config.on_progress(self.history)
             if GUARD_TEXT in screen.text:
                 return self.write_result('Execution error','The app blocks rooted devices and emulators before authentication. Use a permitted physical device or emulator-enabled UAT build.',screen)
             goal_text=str(self.config.test_case.get('goal','')).strip()
@@ -286,11 +327,14 @@ class Agent:
             verification_only=(not str(self.config.test_case.get('steps','')).strip() and re.match(r'^(verify|confirm|check|observe)\b',goal_text,re.I))
             if verification_only:
                 matched=self.verify_result(screen,1,{'verification_only':1})
+                if self.checkpoints:return self.write_result(self.checkpoint_outcome(),'Checkpoint verification completed.',screen)
                 if matched:return self.write_result('Passed',f'Exact visible-text assertion passed: {assertion}',screen)
                 if assertion:return self.write_result('Failed',f'Exact visible-text assertion failed. Expected on screen: {assertion}',screen)
                 return self.write_result('Inconclusive','This verification case has no exact visible-text assertion.',screen)
             goal=self.redact(f"{self.config.test_case.get('goal','')}\nSteps:\n{self.config.test_case.get('steps','')}\nExpected:\n{self.config.test_case.get('expected','')}")
             for step in range(1,self.config.max_steps+1):
+                if self.config.should_stop and self.config.should_stop():
+                    return self.write_result('Inconclusive','Stopped by the dashboard before the next action.',screen)
                 if time.monotonic()-self.started>self.config.timeout_seconds:
                     return self.write_result('Execution error','Runner time limit reached.',screen)
                 foreground=self.device.foreground()
@@ -320,7 +364,10 @@ class Agent:
                     return self.write_result('Inconclusive','The instructed upward swipe did not advance the screen; stopped before tapping covered controls.',screen)
                 public=self.public_screen(screen)
                 loop_started=time.perf_counter()
-                decision=choose(screen.elements,public['text'],goal,self.history)
+                decision_goal=goal
+                if self.checkpoints:
+                    decision_goal+='\nVerification checkpoints: '+json.dumps([{'id':item['id'],'expected':item['expected'],'scope':item['scope'],'required':item['required'],'verdict':item['verdict']} for item in self.checkpoint_verdicts.values()],ensure_ascii=False)+'\nDo not revisit already satisfied during_run checkpoints. Final checkpoints are assessed when you declare DONE; finish navigation at their intended screen. Unknown verification is not permission to repeat completed actions.'
+                decision=choose(screen.elements,public['text'],decision_goal,self.history)
                 op=decision['operation']
                 if tutorial_visible and op!='SWIPE_UP':
                     return self.write_result('Inconclusive','An upward-swipe instruction is visible; stopped before tapping covered controls because its required gesture was not selected.',screen)
@@ -340,7 +387,9 @@ class Agent:
                     phases['screenshot_ms']=round((time.perf_counter()-phase_started)*1000)
                     phases['step_total_ms']=round((time.perf_counter()-loop_started)*1000)
                     self.history.append(entry)
-                    if self.verify_result(final,step+1):
+                    matched=self.verify_result(final,step+1)
+                    if self.checkpoints:return self.write_result(self.checkpoint_outcome(),'Checkpoint verification completed.',final)
+                    if matched:
                         return self.write_result('Passed',f'Exact visible-text assertion passed: {self.config.expected_text.strip()}',final)
                     if not self.config.expected_text.strip():
                         return self.write_result('Inconclusive','The agent declared DONE, but this case has no exact visible-text assertion.',final)
@@ -470,6 +519,8 @@ class Agent:
                 phases['screenshot_ms']=round((time.perf_counter()-phase_started)*1000)
                 phases['step_total_ms']=max(0,round((time.perf_counter()-loop_started)*1000)-phases.get('host_input_pause_ms',0))
                 self.history.append(entry)
+                self.assess_checkpoints(next_screen,step)
+                if self.config.on_progress:self.config.on_progress(self.history)
                 screen=next_screen
                 if GUARD_TEXT in screen.text:
                     return self.write_result('Execution error','The app rejected this emulator before authentication.',screen)
