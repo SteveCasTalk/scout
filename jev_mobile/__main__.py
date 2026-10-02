@@ -8,19 +8,22 @@ from contextlib import nullcontext
 from pathlib import Path
 from .agent import Agent,RunConfig
 from .config import ROOT,load_local_env
-from .device import AndroidDevice
+from .devices import connected
 
 def main()->int:
-    parser=argparse.ArgumentParser(description='Jev-style Android test runner')
+    parser=argparse.ArgumentParser(description='Jev mobile test runner')
     parser.add_argument('run',nargs='?',default='run',choices=['run'])
     parser.add_argument('--case',type=Path,help='Exported dashboard test-case JSON')
     parser.add_argument('--goal',help='Goal for a one-off test; use --case for repeatable runs')
     parser.add_argument('--steps',default='')
     parser.add_argument('--expected',default='')
     parser.add_argument('--expected-text',default='',help='Exact visible text required for a Passed result')
-    parser.add_argument('--package',default='com.wallet.walkthedog.uat')
+    parser.add_argument('--package',help='Android package ID or iOS bundle ID')
+    parser.add_argument('--platform',choices=['Android','iOS'],help='Defaults to the exported case platform or Android')
     parser.add_argument('--serial',help='Required when multiple devices are attached')
     parser.add_argument('--adb',default=os.getenv('ADB_PATH') or 'adb')
+    parser.add_argument('--driver',choices=['adb','appium'],default='',help='Android execution backend; defaults to JEV_ANDROID_DRIVER or appium')
+    parser.add_argument('--appium-url',default='',help='Local Appium URL; defaults to JEV_APPIUM_URL or http://127.0.0.1:4723')
     parser.add_argument('--output',type=Path)
     parser.add_argument('--max-steps',type=int,default=40)
     parser.add_argument('--allow-device-prompts',action='store_true',help='Leave Android autofill and credential providers enabled during the run; notification prompts remain suppressed')
@@ -33,7 +36,12 @@ def main()->int:
         case={'id':None,'revision':None,'title':args.goal[:160],'goal':args.goal,'steps':args.steps,'expected':args.expected}
     else:parser.error('Supply --case or --goal.')
     load_local_env()
-    devices=AndroidDevice.connected(args.adb)
+    platform=args.platform or case.get('platform') or 'Android'
+    if args.platform and case.get('platform') and args.platform!=case['platform']:parser.error('Platform conflicts with the exported case.')
+    case['platform']=platform
+    package=args.package or case.get('app_id') or ('com.wallet.walkthedog.uat' if platform=='Android' else '')
+    if not package:parser.error('iOS requires --package with the app bundle ID.')
+    devices=connected(platform,args.adb)
     if args.serial and args.serial not in devices:parser.error(f'Device {args.serial} is not connected and authorized.')
     if not args.serial and len(devices)!=1:parser.error(f'Expected one connected device; found {len(devices)}. Select --serial explicitly.')
     serial=args.serial or devices[0]
@@ -41,10 +49,14 @@ def main()->int:
     output=args.output or ROOT/'runner-output'/datetime.now().strftime('%Y%m%d-%H%M%S')
     output=output.resolve()
     assertion=args.expected_text or case.get('assertion_text','')
-    device=AndroidDevice(serial,args.adb)
+    agent=Agent(RunConfig(package,serial,case,output,args.adb,args.max_steps,180,assertion,backend=args.driver,appium_url=args.appium_url))
+    device=agent.device
     prompt_policy=nullcontext() if args.allow_device_prompts else device.suppress_credential_prompts()
-    with prompt_policy,device.suppress_notification_prompt(args.package):
-        result=Agent(RunConfig(args.package,serial,case,output,args.adb,args.max_steps,180,assertion)).run()
+    try:
+        with device.screen_recording(output),prompt_policy,device.suppress_notification_prompt(package):
+            result=agent.run()
+        result=agent.finalize_evidence(result)
+    finally:device.close()
     print(json.dumps({'status':result['status'],'notes':result['notes'],'result':str(output/'result.json'),'trace':str(output/'trace.json')},ensure_ascii=False))
     return 0 if result['status'] in ('Passed','Inconclusive') else 2
 

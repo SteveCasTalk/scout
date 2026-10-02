@@ -14,6 +14,10 @@ from jev_mobile.model import ModelError,validate_choice,choose
 STARTUP_XML='''<hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][1344,2992]" clickable="false"><node text="This application is not supported on rooted devices or emulators." class="android.widget.TextView" bounds="[264,1375][1080,1481]" clickable="false"/><node text="OK" class="android.widget.Button" bounds="[264,1553][1080,1703]" clickable="true"/></node></hierarchy>'''
 
 class RunnerSafetyTests(unittest.TestCase):
+ def setUp(self):
+  # This suite injects the legacy ADB transport; Appium has separate contracts.
+  backend=patch.dict(os.environ,{'JEV_ANDROID_DRIVER':'adb'})
+  backend.start();self.addCleanup(backend.stop)
  def test_device_prompt_settings_are_restored_after_failed_run(self):
   from subprocess import CompletedProcess
   device=AndroidDevice('fake')

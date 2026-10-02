@@ -9,7 +9,7 @@ This workspace adapts the [Jev Ultrafast](https://github.com/browser-use/jev-ult
 - MCP server: local tools for device discovery, Jev test execution, run history, and result inspection; see [MCP setup](docs/mcp.md).
 - `.env`: local, Git-ignored owner-only UAT credentials and model keys. Copy `.env.example` if needed, then fill values locally; see [test account setup](docs/test-account.md). **Do not send credentials in chat or put them in test cases.**
 
-The runner currently targets Android. There is no iOS driver. Jev chooses operations and targets; ADB provides device observations, actions, and screenshots. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. The runner also captures low-bitrate Android screen-recording clips for each execution segment; Jev and dashboard imports attach the MP4 clips to the test run when they are available.
+The runner currently targets Android. There is no iOS driver. Jev chooses operations and targets; Appium with UiAutomator2 provides device observations, actions, and screenshots. ADB supports Android discovery, diagnostics, prompt settings, and recording. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. The runner also captures low-bitrate Android screen-recording clips for each execution segment; Jev and dashboard imports attach the MP4 clips to the test run when they are available.
 
 ## AI Avatar UAT
 
@@ -17,9 +17,13 @@ The installed package is `com.wallet.walkthedog.uat`. Version 3.34.0 blocks the 
 
 ## Run from the dashboard
 
-Prompt-driven MCP runs start the local dashboard and device bridge on demand when the dashboard dependencies are installed. The returned dashboard link uses the active local port, so it remains openable when the default port is already occupied. For manually launched dashboard runs, start the dashboard with `cd dashboard && npm run dev` and the local device bridge with `python3 -m jev_mobile.local_server`; runs and safe evidence are saved automatically. See [dashboard runner setup](dashboard/README.md#run-jev-from-the-dashboard).
+Prompt-driven MCP runs start the local dashboard and device bridge on demand when the dashboard dependencies are installed. The returned dashboard link uses the active local port, so it remains openable when the default port is already occupied. For manually launched dashboard runs, start the dashboard with `cd dashboard && npm run dev` and the local device bridge with `uv run python -m jev_mobile.local_server`; runs and safe evidence are saved automatically. See [dashboard runner setup](dashboard/README.md#run-jev-from-the-dashboard).
 
 ## Run a case
+
+Appium is the default Android backend and starts automatically when installed.
+Complete the [Appium setup](docs/appium-trial.md) once. Use `--driver adb` only
+when explicitly choosing the previous backend.
 
 1. Add an Android test case in the dashboard. Give it an exact visible text assertion when possible.
 2. Export the case JSON from the Test cases table.
@@ -39,3 +43,9 @@ The runner writes `result.json`, `trace.json`, `jev-output.json`, and safe scree
 ## Local dashboard
 
 See [dashboard setup](dashboard/README.md). The dashboard uses D1 for records and R2 for evidence, with the hosting platform's identity for access control. Its local development sign-in is for the preview only.
+
+### iOS support
+
+The same runner and dashboard now route iOS cases through Appium/XCUITest.
+See [iOS setup and limitations](docs/ios-appium.md) for device discovery,
+WebDriverAgent signing, CLI/MCP use, and recordings.

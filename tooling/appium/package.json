@@ -1,0 +1,6 @@
+{
+  "name": "jev-appium-trial",
+  "private": true,
+  "scripts": {"start": "appium --address 127.0.0.1 --port 4723 --log-level warn"},
+  "devDependencies": {"appium": "3.8.0"}
+}

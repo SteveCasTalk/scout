@@ -5,6 +5,9 @@
 runner-output/
 __pycache__/
 *.pyc
+*.egg-info/
+tooling/appium/node_modules/
+tooling/appium/.appium/
 dashboard/node_modules/
 dashboard/.next/
 dashboard/tsconfig.tsbuildinfo

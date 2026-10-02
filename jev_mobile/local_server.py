@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .agent import Agent, RunConfig
 from . import dashboard_jobs
 from .config import ROOT, load_local_env
-from .device import AndroidDevice
+from .devices import connected
 
 
 load_local_env()
@@ -76,9 +76,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/devices":
             try:
                 adb = os.getenv("ADB_PATH") or "adb"
-                self._json(200, {"devices": AndroidDevice.connected(adb)})
+                self._json(200, {"devices": connected(parse_qs(parsed.query).get("platform", ["Android"])[0], adb)})
             except Exception as exc:
-                self._json(503, {"error": f"Could not query Android devices: {type(exc).__name__}"})
+                self._json(503, {"error": f"Could not query devices: {type(exc).__name__}"})
             return
         if parsed.path == "/runs":
             root = ROOT / "runner-output"
@@ -158,6 +158,7 @@ class Handler(BaseHTTPRequestHandler):
         if not RUN_LOCK.acquire(blocking=False):
             self._json(409, {"error": "Another Jev run is already active on this device runner."})
             return
+        agent = None
         try:
             raw_length = self.headers.get("Content-Length", "")
             if not raw_length.isdigit() or int(raw_length) > MAX_BODY:
@@ -175,9 +176,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(case, dict) or any(key not in case for key in CASE_FIELDS):
                 self._json(400, {"error": "Test case is missing id, revision, goal, steps, or expected."})
                 return
-            package = str(payload.get("package") or PACKAGE)
+            package = str(payload.get("package") or case.get("app_id") or (PACKAGE if case.get("platform", "Android") == "Android" else ""))
             if not re.fullmatch(r"[A-Za-z0-9_.]{3,240}", package):
-                self._json(400, {"error": "Invalid Android package name."})
+                self._json(400, {"error": "Invalid app package or bundle ID."})
                 return
             serial = payload.get("serial")
             if serial is not None and not isinstance(serial, str):
@@ -189,28 +190,31 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             adb = os.getenv("ADB_PATH") or "adb"
-            devices = AndroidDevice.connected(adb)
+            devices = connected(case.get("platform", "Android"), adb)
             if serial:
                 if serial not in devices:
-                    self._json(400, {"error": f"Android device {serial} is not connected and authorized."})
+                    self._json(400, {"error": f"Device {serial} is not connected and authorized."})
                     return
                 device_serial = serial
             elif len(devices) == 1:
                 device_serial = devices[0]
             else:
-                self._json(409, {"error": "Select one connected Android device.", "devices": devices})
+                self._json(409, {"error": "Select one connected device for this platform.", "devices": devices})
                 return
 
             output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             assertion = str(case.get("assertion_text", "")).strip()
-            device = AndroidDevice(device_serial, adb)
+            agent = Agent(RunConfig(package, device_serial, case, output, adb, max_steps, 180, assertion))
+            device = agent.device
             with device.screen_recording(output), device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
-                result = Agent(RunConfig(package, device_serial, case, output, adb, max_steps, 180, assertion)).run()
+                result = agent.run()
+            result = agent.finalize_evidence(result)
             artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json"}))
             self._json(200, {"run_id": output.name, "result": result, "artifacts": artifacts})
         except Exception as exc:
             self._json(500, {"error": f"Jev runner failed: {type(exc).__name__}: {str(exc)[:300]}"})
         finally:
+            if agent:agent.device.close()
             RUN_LOCK.release()
 
 
