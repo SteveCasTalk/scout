@@ -614,3 +614,87 @@ body{font-family:Arial,Helvetica,sans-serif;font-size:16px}button,a,input,textar
 .insight-item p { margin: 10px 0; font-size: 12px; line-height: 1.7; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .insight-item > div { min-width: 0; flex: 1; }
 @media(max-width:600px) { .insight-item { flex-wrap: wrap; } .checkpoint-report { padding: 12px; } }
+
+/* Run diagnostics and review notes */
+.diagnostic-panel { padding: 22px; margin-top: 16px; }
+.diagnostic-panel > p { color: #64748b; margin: 8px 0 18px; }
+.diagnostic-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 18px; }
+.diagnostic-controls label { display: grid; gap: 5px; min-width: 150px; color: #64748b; font-size: 12px; }
+.diagnostic-controls select, .diagnostic-controls input { border: 1px solid #d9e2e8; border-radius: 8px; background: #fff; color: #142b3a; padding: 9px 11px; min-height: 39px; }
+.diagnostic-controls input { flex: 1; min-width: 180px; }
+.diagnostic-logs, .note-list { display: grid; gap: 10px; }
+.diagnostic-entry, .note-list article { border: 1px solid #e2e9ee; border-radius: 10px; padding: 12px 14px; background: #fff; }
+.diagnostic-entry > div { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.diagnostic-entry b { color: #10283a; font-size: 13px; overflow-wrap: anywhere; }
+.diagnostic-entry time { margin-left: auto; color: #7d8b98; font-size: 12px; }
+.diagnostic-kind { background: #e9f0f4; color: #51697a; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; font-weight: 800; border-radius: 5px; padding: 3px 6px; }
+.diagnostic-entry.warning .diagnostic-kind { background: #fff0d5; color: #9a5c00; }
+.diagnostic-entry.error .diagnostic-kind { background: #ffe4e4; color: #a33030; }
+.diagnostic-entry.checkpoint .diagnostic-kind { background: #e3f2ec; color: #146b4c; }
+.diagnostic-entry p { margin: 8px 0 0; color: #42596b; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.diagnostic-entry button { margin-top: 7px; font-size: 12px; color: #087d8a; text-decoration: underline; }
+.app-log-view { max-height: 600px; overflow: auto; padding: 16px; border-radius: 10px; background: #102336; color: #e4f3f4; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diagnostic-empty { padding: 24px; color: #758795; text-align: center; }
+.device-info-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 10px; margin: 0; }
+.device-info-grid div { border: 1px solid #e2e9ee; border-radius: 9px; padding: 12px; background: #fff; min-width: 0; }
+.device-info-grid dt { color: #6b8090; font-size: 12px; }
+.device-info-grid dd { color: #173246; font-weight: 650; margin: 5px 0 0; overflow-wrap: anywhere; }
+.notes-panel form { display: grid; gap: 8px; justify-items: end; margin-bottom: 16px; }
+.notes-panel textarea { width: 100%; min-height: 85px; }
+.note-list article header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.note-list article time { color: #718291; font-size: 12px; }
+.note-list article header div { display: flex; gap: 5px; }
+.note-list article p { white-space: pre-wrap; overflow-wrap: anywhere; color: #263f50; margin: 8px 0 0; }
+.note-list article textarea { margin-top: 8px; }
+
+/* Checkpoint review and failure investigation */
+.checkpoint-review { margin-top: 14px; padding: 14px; border: 1px solid #dbe5eb; border-radius: 10px; background: #f9fbfc; }
+.checkpoint-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.checkpoint-review-heading b { color: #19374b; }
+.checkpoint-review-heading span { color: #5a7180; font-size: 12px; }
+.checkpoint-review > p { color: #607786; font-size: 12px; margin: 7px 0 12px; }
+.checkpoint-review form { display: grid; grid-template-columns: minmax(160px,220px) 1fr auto; align-items: end; gap: 10px; }
+.checkpoint-review form label { display: grid; gap: 5px; min-width: 0; color: #536b7b; font-size: 12px; }
+.checkpoint-review select, .checkpoint-review textarea { width: 100%; border: 1px solid #d7e1e8; border-radius: 8px; background: #fff; padding: 8px 10px; color: #1d3648; }
+.checkpoint-review textarea { min-height: 45px; resize: vertical; }
+.checkpoint-review details { margin-bottom: 10px; }
+.checkpoint-review-entry { padding: 9px 0; border-top: 1px solid #e2e9ee; }
+.checkpoint-review-entry b { font-size: 12px; }
+.checkpoint-review-entry time { color: #789; font-size: 11px; margin-left: 8px; }
+.checkpoint-review-entry p { color: #364f60; font-size: 12px; white-space: pre-wrap; margin: 5px 0 0; }
+.checkpoint-investigation { margin-top: 12px; border: 1px solid #ecdcc8; border-radius: 10px; padding: 12px 14px; background: #fffdf8; }
+.checkpoint-investigation > summary { font-weight: 700; color: #724716; cursor: pointer; }
+.checkpoint-investigation p { color: #5d6d79; font-size: 12px; line-height: 1.5; }
+.checkpoint-investigation dl { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 8px; }
+.checkpoint-investigation dl div { background: #fff; border: 1px solid #eadfce; border-radius: 7px; padding: 8px; }
+.checkpoint-investigation dt { color: #7b8790; font-size: 11px; }
+.checkpoint-investigation dd { margin: 3px 0 0; color: #294252; font-size: 12px; overflow-wrap: anywhere; }
+.checkpoint-investigation h4 { color: #344c5b; font-size: 12px; margin: 14px 0 6px; }
+.checkpoint-investigation ul { margin: 0; padding-left: 18px; color: #445b6b; font-size: 12px; }
+.checkpoint-investigation li { margin: 4px 0; }
+.checkpoint-investigation button { color: #067c8a; text-decoration: underline; margin-left: 5px; }
+.checkpoint-investigation pre { max-height: 320px; overflow: auto; padding: 12px; border-radius: 7px; background: #142739; color: #e4f3f4; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.checkpoint-investigation small { display: block; margin-top: 8px; color: #6e7e88; }
+@media (max-width: 780px) { .checkpoint-review form { grid-template-columns: 1fr; } }
+
+/* Verified run prerequisites */
+.starting-conditions-editor, .starting-conditions-report { border: 1px solid #dce7ec; border-radius: 12px; padding: 16px; background: #f9fcfd; margin: 14px 0; }
+.starting-conditions-editor h3, .starting-conditions-report h3 { font-size: 15px; color: #18384a; margin: 0; }
+.starting-conditions-editor p, .starting-conditions-report > p { color: #607684; font-size: 12px; line-height: 1.5; margin: 7px 0 14px; }
+.starting-condition-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.starting-conditions-editor label { display: grid; gap: 5px; color: #405b6c; font-size: 12px; margin-top: 10px; }
+.starting-conditions-editor label span { color: #8797a1; }
+.starting-conditions-editor input, .starting-conditions-editor select, .starting-conditions-editor textarea { width: 100%; border: 1px solid #d4e0e7; border-radius: 8px; padding: 9px 10px; color: #17364a; background: #fff; }
+.starting-conditions-editor small { display: block; margin-top: 10px; color: #718795; line-height: 1.4; }
+.starting-conditions-report header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.starting-conditions-report header span { color: #6b8290; font-size: 12px; }
+.starting-conditions-report > div { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 8px; }
+.starting-conditions-report article { border: 1px solid #dce7ec; border-radius: 8px; padding: 10px; background: #fff; }
+.starting-conditions-report article b { text-transform: capitalize; color: #203e50; }
+.starting-conditions-report article span { float: right; text-transform: uppercase; letter-spacing: .05em; font-size: 10px; font-weight: 800; color: #146b4c; }
+.starting-conditions-report article.starting-condition-missing span, .starting-conditions-report article.starting-condition-unknown span { color: #aa591c; }
+.starting-conditions-report article p { margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; }
+.starting-conditions-report article small { color: #6d7e87; }
+.setup-verified-conditions { font-size: 12px; color: #087985; }
+.status-blocked { background: #fff0d5; color: #915110; }
+@media (max-width: 660px) { .starting-condition-fields { grid-template-columns: 1fr; } }

@@ -6,7 +6,7 @@ import threading
 import time
 from .agent import Agent, RunConfig
 from .config import ROOT
-from .device import AndroidDevice
+from .devices import connected
 
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
@@ -50,18 +50,20 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
     import re
     package = str(case.get('app_id') or payload.get('package') or '')
     if not re.fullmatch(r'[A-Za-z0-9_.]{3,240}', package):
-        raise ValueError('Set a valid Android package ID on the case.')
-    if case.get('platform') != 'Android':
-        raise ValueError('Live runs currently support Android cases only.')
+        raise ValueError('Set a valid app package or bundle ID on the case.')
+    if case.get('platform') not in {'Android', 'iOS'}:
+        raise ValueError('Select Android or iOS on the case.')
     serial = payload.get('serial')
     adb = os.getenv('ADB_PATH') or 'adb'
-    if not isinstance(serial, str) or serial not in AndroidDevice.connected(adb):
-        raise ValueError('Select a connected, authorized Android device.')
+    if not isinstance(serial, str) or serial not in connected(case['platform'], adb):
+        raise ValueError('Select a connected device for this case’s platform.')
     steps = payload.get('max_steps', 40)
     if type(steps) is not int or not 1 <= steps <= 100:
         raise ValueError('Action limit must be 1–100.')
     if payload.get('conditions_confirmed') is not True:
         raise ValueError('Confirm starting conditions before running.')
+    allow_consent = payload.get('allow_consent', False)
+    if type(allow_consent) is not bool:raise ValueError('Prompt consent must be true or false.')
     mode = payload.get('start_mode', 'current')
     if mode not in {'current', 'relaunch'}:
         raise ValueError('Choose current state or relaunch.')
@@ -85,13 +87,15 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
                 with LOCK:
                     JOBS[job_id]['steps'] = visible
                     JOBS[job_id]['checkpoint_results'] = list(agent.checkpoint_verdicts.values()) if agent else []
+                    JOBS[job_id]['starting_condition_results'] = list(agent.starting_condition_results) if agent else []
             job = JOBS[job_id]
-            agent = Agent(RunConfig(package, serial, case, output, adb, steps, 600, str(case.get('assertion_text', '')), mcp_host_text=True, on_progress=progress, should_stop=job['_stop'].is_set))
+            agent = Agent(RunConfig(package, serial, case, output, adb, steps, 600, str(case.get('assertion_text', '')), allow_consent=allow_consent, mcp_host_text=True, on_progress=progress, should_stop=job['_stop'].is_set))
             if mode == 'relaunch':
-                agent.device.command('shell', 'am', 'force-stop', package)
+                agent.device.terminate(package)
             while True:
                 with agent.device.screen_recording(output), agent.device.suppress_credential_prompts(), agent.device.suppress_notification_prompt(package):
                     result = agent.run() if agent._continuation is None else agent.resume_text(job['_text'])
+                result = agent.finalize_evidence(result)
                 with LOCK:
                     job['_text'] = None
                 if result.get('status') != 'awaiting_input':
@@ -116,6 +120,9 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
             with LOCK:
                 JOBS[job_id].update(status='error', error=message[:500])
         finally:
+            if agent:
+                if agent._continuation is not None:agent._continuation.close()
+                agent.device.close()
             run_lock.release()
     try:
         threading.Thread(target=worker, daemon=True).start()

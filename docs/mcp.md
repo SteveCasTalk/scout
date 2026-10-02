@@ -1,6 +1,6 @@
 # Jev Mobile MCP server
 
-The local MCP server exposes the Android runner to MCP clients. Jev chooses actions, ADB observes and operates the device, and the runner independently checks the case's exact visible-text assertion. When a run reaches an ordinary editable field, it can pause and ask the host LLM to supply text, then resume after `enter_text` is called.
+The local MCP server exposes the Android runner to MCP clients. Jev chooses actions, Appium observes and operates the device, and the runner independently checks the case's exact visible-text assertion. When a run reaches an ordinary editable field, it can pause and ask the host LLM to supply text, then resume after `enter_text` is called.
 
 ## Setup
 
@@ -8,6 +8,8 @@ Install uv and Python 3.11 or newer, then install the project dependencies once:
 
     cd /Users/phucnguyen/Documents/ChatGPT/jev-mobile
     uv sync
+
+Install the Appium server and UiAutomator2 driver once using [Appium setup](appium-trial.md). The runner starts the installed local server on demand. Appium is the default; set `JEV_ANDROID_DRIVER=adb` only to explicitly choose the previous backend.
 
 Copy .env.example to .env if needed and set TYPESAFE_API_KEY. Set JEV_TEST_EMAIL and JEV_TEST_PASSWORD locally when running authentication tests. To select a non-default ADB executable, set ADB_PATH in .env. MCP host-provided text does not require `TEXT_MODEL_API_KEY`; that key is for standalone runner use. Keep passwords and other credentials in the local credential provider, not in `enter_text`.
 
@@ -69,3 +71,10 @@ Evidence exports are restricted to `result.json`, `trace.json`, `jev-output.json
 ## Prompt-driven flow
 
 The user can ask in natural language, for example: “On the connected Samsung, sign in to AI Avatar using my configured test account and confirm the home screen appears.” The assistant translates that request into `goal`, ordered `steps`, and `expected` fields and calls `run_android_test_from_prompt` directly. If the runner returns `awaiting_input`, the assistant uses the explicit user-provided value with `enter_text`; for sensitive authentication values it relies on the local configured account instead. It can then call `prepare_run_verification`, inspect screenshots with `get_run_screenshot` when needed, record the independent verdict, and export the evidence bundle. No saved case is required. If multiple devices are connected, the assistant should call `list_android_devices` and ask the user which device to use before starting.
+
+## iOS
+
+Use `list_ios_devices`, then `run_mobile_test_from_prompt` with `platform="iOS"`
+and the app's explicit bundle ID in `package`. `run_mobile_test` accepts exported
+Android or iOS cases. Existing Android tool names remain available. See
+[iOS setup](ios-appium.md) for Xcode, signing, recording, and current limitations.

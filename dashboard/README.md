@@ -33,6 +33,9 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_brown_callisto.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_canvas_ticket_keys.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_verification_checkpoints.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_run_diagnostics_notes.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_checkpoint_reviews.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_starting_conditions.sql
 npm run dev
 ```
 
@@ -85,3 +88,29 @@ Cases accept up to 12 checkpoints. Each has a unique `id`, observable `expected`
 - Insight shows the latest run per case. Required checkpoint violations are **possible bugs**, not confirmed defects; missing evidence is a verification gap. Old failures stay in a separate legacy category. Existing runs are not retroactively classified.
 
 MCP callers should call `get_test_case_template` before authoring tests. `run_android_test_from_prompt` exposes a typed checkpoint schema plus suite, preconditions, and ticket key. New calls need checkpoints or a legacy text assertion. Explore the app, map each acceptance criterion to an observable expectation, and avoid inventing evidence for backend-only or pixel-only requirements. Checkpoints take precedence over `assertion_text` when provided. Restart/reload the MCP server to publish the updated tool schema.
+
+### Logs, device info, and review notes
+
+- Each run has separate **Logs**, **Device info**, and **Notes** tabs. Runner logs are derived from the saved outcome, trace, and checkpoint decisions. Filter or search them, open captured step screenshots, and download a text copy.
+- Android app logs are a bounded `logcat` tail scoped to the app process when the process is still available at run completion. Known local test credentials and email addresses are redacted. They may be empty on old/manual runs or when Android cannot provide a process log. No historical logcat is fabricated.
+- New Jev results save manufacturer, model, Android version/API level, screen size, package, and app version when ADB provides them. The dashboard stores these with the run, so later device changes do not rewrite past metadata. Older and manual runs show fields as not captured.
+- Case and run notes are separate from Jev's immutable outcome reason. Notes can be added, edited, or deleted; each record keeps creation and last edit timestamps. Notes are scoped to the signed-in workspace owner. The local database needs migration `0008_run_diagnostics_notes.sql` once.
+
+### Human checkpoint review and failure investigation
+
+- Open a saved run with structured checkpoints to **accept** or **dispute** each Jev verdict and explain why. Reviews are appended with timestamps; the current review and prior decisions remain visible. Jev's original verdict, run status, and evidence are never rewritten by a review. Insight marks findings as awaiting review, accepted, or disputed without silently recategorizing the original run.
+- When a new run marks a checkpoint violated, Jev captures a bounded app-process log excerpt, foreground package, app-process state, and capture time at that decision. The checkpoint's **Investigate failure** section links the cited screenshot, nearby runner actions, those diagnostic signals, and the run's saved device/app metadata. If checkpoint-time logs are missing, it identifies end-of-run logs as a later fallback. The view supplies evidence for human triage; it does not declare an app bug or a runner error automatically.
+- Migration `0009_checkpoint_reviews.sql` adds append-only review records. Existing checkpoint runs have no checkpoint-time diagnostic snapshot; new runs populate it. Case/run exports include saved human reviews where applicable.
+
+### Starting conditions and Blocked runs
+
+- A case can define an exact installed app version, required login state (`signed_in` or `signed_out`), a visible account identifier, and up to eight text values that must appear on the opening screen. Free-text Preconditions remain setup guidance; only the structured fields are checked automatically. `$JEV_TEST_EMAIL` resolves to the runner's locally configured test account without storing its address in the case.
+- Jev launches and observes the app, then checks starting conditions before the first test action. Version uses Android package metadata. Account and required data use case-insensitive visible text. Login state uses a conservative Jev classification of the opening screen; missing model access, ambiguous evidence, or confidence below 0.85 is unknown. Unknown or missing requirements stop the run as **Blocked**. A missing app package is also Blocked.
+- Every check records expected, observed, status, and reason in the saved trace and run UI. Blocked is distinct from an app assertion failure or runner error, and stops suite progression. Previous cases have no automated starting checks until they are edited. New prompt-driven MCP cases can provide `starting_conditions`; the test-case template documents the same contract.
+
+### Android backend
+
+Appium is the default. Follow [Appium setup](../docs/appium-trial.md) once, then
+start the bridge with `uv run python -m jev_mobile.local_server`. The installed
+local Appium server starts on demand. `JEV_ANDROID_DRIVER=adb` explicitly selects
+the previous backend. Restart the bridge and MCP server after switching backends.

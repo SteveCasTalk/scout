@@ -3,8 +3,10 @@
 import { useMemo, useState } from 'react';
 import { ArrowUpRight, ChevronDown, Download, FileText, Film, Image as ImageIcon, Layers, Pencil, Play, Workflow } from 'lucide-react';
 import { CheckpointReport } from './checkpoints';
+import { NotesPanel } from './run-diagnostics';
+import { StartingConditionsReport } from './starting-conditions';
 import { Button } from '@/components/ui/button';
-import type { Evidence, Run, TestCase } from '@/lib/contracts';
+import type { Evidence, Run, TestCase, ReviewNote } from '@/lib/contracts';
 
 type Props = {
     cases: TestCase[];
@@ -14,6 +16,10 @@ type Props = {
     onCreate: (suite: string, project: string) => void;
     runs: Run[];
     evidence: Evidence[];
+    notes: ReviewNote[];
+    onCreateNote: (type: 'case' | 'run', id: string, body: string) => Promise<void>;
+    onUpdateNote: (note: ReviewNote, body: string) => Promise<void>;
+    onDeleteNote: (note: ReviewNote) => Promise<void>;
     runnerReady: boolean;
     runningCaseId: string | null;
     saving: boolean;
@@ -71,9 +77,9 @@ export function TestCaseLibrary(props: Props) {
                 {visible.filter(row => props.projectName(row.test) === project && groupKey(row.test) === ticket).map(({ test, runs, latest, files }) => <details className="studio-case-row" key={test.id}>
                     <summary><span className="case-row-name">{organizing && <input type="checkbox" aria-label={`Select ${test.title}`} checked={selected.includes(test.id)} disabled={busy} onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onChange={event => setSelected(old => event.target.checked ? [...old, test.id] : old.filter(id => id !== test.id))}/>}<ChevronDown size={15} className="case-expand"/><FileText size={17}/><span><b>{test.title}</b><small>{test.platform} · {grouping === 'suite' ? ticketKey(test) : test.suite} · v{test.revision}</small></span></span><Outcome run={latest}/><span className="case-last-run">{latest ? date(latest.created) : 'Not run yet'}<small>{runs.length} {runs.length === 1 ? 'run' : 'runs'}</small></span><span className="case-evidence-count"><ImageIcon size={13}/>{files.filter(file => file.mime.startsWith('image/')).length}<Film size={13}/>{files.filter(file => file.mime.startsWith('video/')).length}</span></summary>
                     <div className="studio-case-expanded">
-                        <div className="case-actions"><Button size="sm" variant="outline" onClick={() => props.onEdit(test)}><Pencil size={13}/>Edit case</Button><Button size="sm" variant="ghost" onClick={() => props.onExport(test)}><Download size={13}/>Export</Button><Button size="sm" variant="ghost" onClick={() => props.onCanvas(test)}><Workflow size={13}/>Canvas</Button><span className="case-action-spacer"/><Button size="sm" variant="outline" onClick={() => props.onRecord(test)}>Record run</Button>{test.platform === 'Android' && <Button size="sm" onClick={() => props.onRun(test)} disabled={!props.runnerReady || !!props.runningCaseId || props.saving} title={!props.runnerReady ? 'Connect the local runner to execute this case' : undefined}><Play size={13}/>{props.runningCaseId === test.id ? 'Running…' : 'Run'}</Button>}</div>
+                        <div className="case-actions"><Button size="sm" variant="outline" onClick={() => props.onEdit(test)}><Pencil size={13}/>Edit case</Button><Button size="sm" variant="ghost" onClick={() => props.onExport(test)}><Download size={13}/>Export</Button><Button size="sm" variant="ghost" onClick={() => props.onCanvas(test)}><Workflow size={13}/>Canvas</Button><span className="case-action-spacer"/><Button size="sm" variant="outline" onClick={() => props.onRecord(test)}>Record run</Button>{['Android', 'iOS'].includes(test.platform) && <Button size="sm" onClick={() => props.onRun(test)} disabled={!props.runnerReady || !!props.runningCaseId || props.saving} title={!props.runnerReady ? 'Connect the local runner to execute this case' : undefined}><Play size={13}/>{props.runningCaseId === test.id ? 'Running…' : 'Run'}</Button>}</div>
                         <div className="case-definition"><section><h4>Goal</h4><p>{test.goal}</p><h4>Expected result</h4><p>{test.expected}</p></section><section><h4>Steps</h4><ol>{test.steps.split('\n').filter(Boolean).map((step, index) => <li key={index}>{step}</li>)}</ol>{test.preconditions && <><h4>Preconditions</h4><p>{test.preconditions}</p></>}</section></div>
-                        <CheckpointReport definitions={test.checkpoints}/><div className="case-history-heading"><h4>Run history</h4><span>{runs.length} runs · {files.length} evidence files</span></div>
+                        <StartingConditionsReport defined={test.starting_conditions}/><CheckpointReport definitions={test.checkpoints}/><NotesPanel targetType="case" targetId={test.id} notes={props.notes} onCreate={props.onCreateNote} onUpdate={props.onUpdateNote} onDelete={props.onDeleteNote}/><div className="case-history-heading"><h4>Run history</h4><span>{runs.length} runs · {files.length} evidence files</span></div>
                         {runs.length ? runs.map(run => {
                             const artifacts = files.filter(file => file.run_id === run.id);
                             return <div className="case-history-item" key={run.id}><button type="button" className="case-history-open" onClick={() => props.onOpenRun(run)}><Play size={14}/><span><b>{date(run.created)}</b><small>{run.device} · Build {run.build} · v{run.snapshot.revision}</small></span><Outcome run={run}/><ArrowUpRight size={15}/></button>{run.status !== 'Passed' && <p className="case-run-reason">{run.notes || 'No reason was recorded.'}</p>}{artifacts.length > 0 && <details className="case-artifacts"><summary>{artifacts.length} evidence files</summary><div>{artifacts.map(file => <button type="button" key={file.id} onClick={() => props.onOpenRun(run, file)}>{file.mime.startsWith('video/') ? <Film size={14}/> : file.mime.startsWith('image/') ? <ImageIcon size={14}/> : <FileText size={14}/>}<span>{file.name}</span><ArrowUpRight size={12}/></button>)}</div></details>}</div>;

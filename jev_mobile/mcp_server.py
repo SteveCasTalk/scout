@@ -23,8 +23,10 @@ from .agent import Agent, RunConfig
 from .config import ROOT, load_local_env
 from .dashboard_runtime import ensure_dashboard
 from .device import AndroidDevice
+from .devices import connected
 from .validation import validate_prompt_steps
 from .checkpoints import validate_checkpoints
+from .starting_conditions import validate_starting_conditions
 
 
 mcp = FastMCP("Jev Mobile")
@@ -50,8 +52,14 @@ def _expire_pending_runs() -> None:
 
 def _drive_mcp_agent(agent: Agent, text: str | None = None) -> dict[str, Any]:
     device = agent.device
-    with device.screen_recording(agent.output), device.suppress_credential_prompts(), device.suppress_notification_prompt(agent.config.package):
-        return agent.run() if text is None else agent.resume_text(text)
+    try:
+        with device.screen_recording(agent.output), device.suppress_credential_prompts(), device.suppress_notification_prompt(agent.config.package):
+            result = agent.run() if text is None else agent.resume_text(text)
+        return agent.finalize_evidence(result)
+    except BaseException:
+        if agent._continuation is not None:agent._continuation.close()
+        device.close()
+        raise
 
 
 def _mcp_agent_response(
@@ -86,6 +94,7 @@ def _mcp_agent_response(
             "next_tool": "enter_text",
             "text_request": result["text_request"],
             "checkpoint_results": list(agent.checkpoint_verdicts.values()),
+            "starting_condition_results": list(agent.starting_condition_results),
             "screenshot": result.get("screenshot"),
             "expires_in_seconds": PENDING_MCP_RUN_TTL,
         }
@@ -98,6 +107,7 @@ def _mcp_agent_response(
         "notes": result["notes"],
         "verification": result["verification"],
         "checkpoint_results": result.get("checkpoint_results", []),
+        "starting_condition_results": result.get("starting_condition_results", []),
         "run_directory": str(agent.output),
         "result_file": str(agent.output / "result.json"),
         "trace_file": str(agent.output / "trace.json"),
@@ -144,14 +154,14 @@ def _read_run_json(directory: Path, filename: str, fallback: Any) -> Any:
         raise ValueError(f"Could not read {filename} for this run.") from exc
 
 
-def _select_device(adb: str, serial: str | None) -> str:
-    devices = AndroidDevice.connected(adb)
+def _select_device(adb: str, serial: str | None, platform: str = 'Android') -> str:
+    devices = connected(platform, adb)
     if serial:
         if serial not in devices:
-            raise ValueError(f"Android device {serial} is not connected and authorized.")
+            raise ValueError(f"{platform} device {serial} is not connected and authorized.")
         return serial
     if len(devices) != 1:
-        raise ValueError(f"Expected one connected Android device; found {len(devices)}. Pass serial explicitly.")
+        raise ValueError(f"Expected one connected {platform} device; found {len(devices)}. Pass serial explicitly.")
     return devices[0]
 
 
@@ -182,14 +192,14 @@ def search_android_packages(query: str, serial: str | None = None, limit: int = 
 
 
 @mcp.tool()
-def run_android_test(
+def run_mobile_test(
     case_file: str,
     package: str | None = None,
     serial: str | None = None,
     max_steps: int = 40,
     adb: str | None = None,
 ) -> dict[str, Any]:
-    """Run an exported Android test with Jev and verify expected visible text. If ordinary text is needed, call `enter_text` with the returned run_id and a user-authorized value.
+    """Run an exported Android or iOS test with Jev and verify expected visible text. If ordinary text is needed, call `enter_text` with the returned run_id and a user-authorized value.
 
     Credentials and Jev API keys are read from the local .env file. Do not pass credentials as tool arguments.
     """
@@ -205,17 +215,18 @@ def run_android_test(
         raise ValueError(f"Could not read the test case JSON: {exc}") from exc
     if not isinstance(case, dict) or any(key not in case for key in CASE_FIELDS):
         raise ValueError("Test-case JSON must contain id, revision, goal, steps, and expected.")
+    platform = case.get("platform", "Android")
     package = package or str(case.get("app_id", "")).strip()
     if not package:
-        if str(case.get("project", "General")).strip().casefold() in {"general", "ai avatar"}:
+        if platform == "Android" and str(case.get("project", "General")).strip().casefold() in {"general", "ai avatar"}:
             package = DEFAULT_PACKAGE
         else:
             raise ValueError(f"Set the app package ID on the {case.get('project')} case before running it.")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{3,240}", package):
-        raise ValueError("package must be a valid Android application ID.")
+        raise ValueError("package must be a valid app package or bundle ID.")
 
     adb_path = adb or os.getenv("ADB_PATH") or "adb"
-    device_serial = _select_device(adb_path, serial)
+    device_serial = _select_device(adb_path, serial, platform)
     output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     assertion = str(case.get("assertion_text", "")).strip()
     agent = Agent(
@@ -245,6 +256,15 @@ class CheckpointInput(BaseModel):
     method: Literal['classification', 'text_present', 'text_absent']
 
 
+class StartingConditionsInput(BaseModel):
+    """Checks on the opening app screen before test actions."""
+    model_config = ConfigDict(extra='forbid', strict=True)
+    account: str = Field(default='', max_length=160, description='Literal visible account identifier or $JEV_TEST_EMAIL for the local test email.')
+    login_state: Literal['any', 'signed_in', 'signed_out'] = 'any'
+    app_version: str = Field(default='', max_length=120, description='Exact installed app version.')
+    required_data: list[str] = Field(default_factory=list, max_length=8, description='Text values visible on the opening app screen.')
+
+
 @mcp.tool()
 def get_test_case_template() -> dict[str, Any]:
     """Read before authoring a test. Canonical MCP input template and verification contract."""
@@ -261,9 +281,13 @@ def get_test_case_template() -> dict[str, Any]:
             "Include user-approved ordinary input in steps. Keep credentials in local configuration.",
             "A classification requires step evidence and decision/evidence confidence >=0.85; otherwise unknown.",
             "Checkpoints determine the outcome when supplied; assertion_text is the legacy fallback.",
+            "On iOS, specify exact picker labels and normalized slider positions (0 to 1) in steps. SET_VALUE requests must use only those values; never invent a birthday. System prompts require explicit allow_consent authorization.",
+            "Use run_mobile_test_from_prompt with platform Android or iOS; iOS requires an explicit bundle ID and an available XCUITest device. Never substitute an Android package ID for iOS.",
+            "Use starting_conditions for prerequisites visible on the opening screen. Unverifiable or missing prerequisites produce Blocked before test actions.",
+            "For a login test, require signed_out; do not require the account identifier to be visible before signing in.",
         ],
         "input": {
-            "title": "Login reaches account settings", "project": "Custom Avatar", "suite": "Authentication", "preconditions": "App installed; signed out; test credentials configured locally.", "ticket_key": "", "package": "com.example.uat",
+            "platform": "Android", "title": "Login reaches account settings", "project": "Custom Avatar", "suite": "Authentication", "preconditions": "Test credentials configured locally.", "starting_conditions": {"account": "", "login_state": "signed_out", "app_version": "", "required_data": []}, "ticket_key": "", "package": "com.example.uat",
             "goal": "Verify a valid account can access account settings after login.",
             "steps": "Open the observed login entry\nEnter configured credentials\nSubmit login\nOpen account settings",
             "expected": "Login is accepted and account settings is visible.",
@@ -276,7 +300,7 @@ def get_test_case_template() -> dict[str, Any]:
 
 
 @mcp.tool()
-def run_android_test_from_prompt(
+def run_mobile_test_from_prompt(
     goal: str,
     steps: str,
     expected: str,
@@ -291,24 +315,28 @@ def run_android_test_from_prompt(
     project: str = "General",
     allow_consent: bool = False,
     checkpoints: list[CheckpointInput] | None = None,
+    starting_conditions: StartingConditionsInput | None = None,
     suite: str = "Prompt runs",
     preconditions: str = "",
     ticket_key: str = "",
+    platform: str = "Android",
 ) -> dict[str, Any]:
-    """Run an Android test from the user's prompt. If Jev needs ordinary text, this returns `awaiting_input`; the assistant must choose only text requested by the user and call `enter_text` with the returned run_id.
+    """Run an Android or iOS test from the user's prompt. If Jev needs ordinary text, this returns `awaiting_input`; the assistant must choose only text requested by the user and call `enter_text` with the returned run_id.
 
     Call get_test_case_template before defining a new case. Map acceptance criteria to checkpoints:
     id, expected, scope (during_run/final), required (boolean), method (classification/text_present/text_absent).
     During-run means a condition occurs at least once, not an invariant. Final means only the final observation.
+    starting_conditions are checked on the opening screen before any test action; missing or unverifiable checks produce Blocked.
     Use observable expectations, never infer hidden backend success from UI navigation.
     The assistant should translate the user's prompt into a concise goal, ordered steps, and expected outcome. For a read-only check of the current screen, empty steps are allowed when `assertion_text` is supplied; that skips navigation decisions.
-    For projects other than General or AI Avatar, provide the app package ID or first use search_android_packages.
+    Always provide the bundle ID for iOS. For Android projects other than General or AI Avatar, provide the package ID or use search_android_packages.
     Credentials may be supplied for this run or loaded from local .env. They are used only by the local device runner,
     redacted from saved outputs, and are not included in Jev model requests. Tool arguments are still visible to the MCP
     host and client; for stronger secrecy, omit them and configure credentials in .env instead.
     Legal or privacy consent controls are blocked by default. Set allow_consent=true only when the user explicitly
     authorizes accepting the app's terms/privacy consent for this specific run.
     """
+    if platform not in {'Android','iOS'}:raise ValueError('Platform must be Android or iOS.')
     load_local_env()
     goal, steps, expected = goal.strip(), steps.strip(), expected.strip()
     title = title.strip()
@@ -325,13 +353,13 @@ def run_android_test_from_prompt(
     if not project or len(project) > 100:
         raise ValueError("project must be 1–100 characters.")
     if not package:
-        if project.casefold() in {"general", "ai avatar"}:
+        if platform == "Android" and project.casefold() in {"general", "ai avatar"}:
             package = DEFAULT_PACKAGE
         else:
-            raise ValueError(f"Provide the Android package ID for project {project!r}; refusing to launch the default app for another project.")
+            raise ValueError(f"Provide the app package or iOS bundle ID for project {project!r}; refusing to launch the default app for another project.")
     package = package.strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]{3,240}", package):
-        raise ValueError("package must be a valid Android application ID.")
+        raise ValueError("package must be a valid app package or bundle ID.")
     if len(assertion_text) > 240:
         raise ValueError("assertion_text must be at most 240 characters.")
     if not isinstance(suite, str) or not suite.strip() or len(suite) > 80:
@@ -339,6 +367,7 @@ def run_android_test_from_prompt(
     if len(preconditions) > 4000 or len(ticket_key) > 40:
         raise ValueError("preconditions or ticket_key exceeds its size limit.")
     checkpoints = validate_checkpoints([item.model_dump() if isinstance(item, CheckpointInput) else item for item in checkpoints] if checkpoints is not None else None)
+    starting_conditions = validate_starting_conditions(starting_conditions.model_dump() if isinstance(starting_conditions, StartingConditionsInput) else starting_conditions)
     if not checkpoints and not assertion_text:
         raise ValueError('Provide checkpoints using get_test_case_template, or a legacy assertion_text.')
     validate_prompt_steps(goal, steps, assertion_text or ('checkpoint verification' if checkpoints else ''))
@@ -350,12 +379,13 @@ def run_android_test_from_prompt(
         raise ValueError("max_steps must be between 1 and 100.")
 
     adb_path = adb or os.getenv("ADB_PATH") or "adb"
-    device_serial = _select_device(adb_path, serial)
+    device_serial = _select_device(adb_path, serial, platform)
     case = {
         "id": "prompt-" + datetime.now().strftime("%Y%m%d%H%M%S%f"),
         "revision": 1,
         "project": project,
         "app_id": package,
+        "platform": platform,
         "package": package,
         "title": title,
         "goal": goal,
@@ -363,6 +393,7 @@ def run_android_test_from_prompt(
         "expected": expected,
         "assertion_text": assertion_text,
         "checkpoints": checkpoints,
+        "starting_conditions": starting_conditions,
         "suite": suite.strip(), "preconditions": preconditions, "ticket_key": ticket_key.strip().upper(),
     }
     output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -609,6 +640,24 @@ def main() -> None:
     load_local_env()
     mcp.run(transport="stdio")
 
+
+
+
+@mcp.tool()
+def list_ios_devices() -> dict[str, Any]:
+    """List connected paired iPhones/iPads and already booted iOS simulators on this Mac."""
+    from .ios_device import discover_ios
+    devices = discover_ios()
+    return {"devices": devices, "count": len(devices)}
+
+
+@mcp.tool()
+def run_android_test(case_file: str, package: str | None = None, serial: str | None = None, max_steps: int = 40, adb: str | None = None) -> dict[str, Any]:
+    """Compatibility entry point. Prefer run_mobile_test for platform-aware exported cases."""
+    return run_mobile_test(case_file, package, serial, max_steps, adb)
+
+run_android_test_from_prompt = run_mobile_test_from_prompt
+mcp.add_tool(run_mobile_test_from_prompt, name="run_android_test_from_prompt", description="Compatibility name for run_mobile_test_from_prompt; defaults to Android.")
 
 if __name__ == "__main__":
     main()

@@ -56,6 +56,12 @@ class Screen:
     height: int
 
 class AndroidDevice:
+    backend = 'adb'
+    platform = 'Android'
+
+    def close(self) -> None:
+        """Release backend resources (ADB has no per-run session)."""
+
     def __init__(self,serial:str,adb:str='adb'):
         self.serial=serial
         self.adb=adb
@@ -336,7 +342,10 @@ class AndroidDevice:
     def swipe(self,direction:str,width:int,height:int) -> None:
         x=width//2
         y1,y2=(int(height*.75),int(height*.3)) if direction=='up' else (int(height*.3),int(height*.75))
-        self.command('shell','input','swipe',str(x),str(y1),str(x),str(y2),'320')
+        self.swipe_coordinates(x,y1,x,y2,320)
+
+    def swipe_coordinates(self,x1:int,y1:int,x2:int,y2:int,duration_ms:int) -> None:
+        self.command('shell','input','swipe',str(x1),str(y1),str(x2),str(y2),str(duration_ms))
 
     def swipe_scrollable_next_item(self,width:int,height:int,screen:Screen|None=None) -> dict:
         """Swipe through the largest accessible content viewport when available."""
@@ -362,8 +371,14 @@ class AndroidDevice:
         # gesture regions do not consume an instruction-driven gesture.
         x=left+(right-left)//2
         gesture={'start':[x,top+int((bottom-top)*.90)],'end':[x,top+int((bottom-top)*.10)],'duration_ms':300,'viewport':list(viewport),'source':source}
-        self.command('shell','input','swipe',str(x),str(gesture['start'][1]),str(x),str(gesture['end'][1]),str(gesture['duration_ms']))
+        self.swipe_coordinates(x,gesture['start'][1],x,gesture['end'][1],gesture['duration_ms'])
         return gesture
+
+    def terminate(self, package: str) -> None:
+        self.command('shell', 'am', 'force-stop', package)
+
+    def hide_keyboard(self) -> None:
+        self.back()
 
     def back(self) -> None:
         self.command('shell','input','keyevent','4')
