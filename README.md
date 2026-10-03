@@ -26,10 +26,6 @@ Open **Documentation** in the dashboard sidebar or visit `/docs` on its active l
 
 The runner supports Android through Appium/UiAutomator2 and iOS through Appium/XCUITest on macOS. Jev chooses operations and targets; Appium provides native observations, actions, and screenshots. ADB supports Android discovery, diagnostics, prompt settings, and recording. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. The runner also captures screen-recording clips on both platforms when recording prerequisites are available for each execution segment; Jev and dashboard imports attach the MP4 clips to the test run when they are available.
 
-## AI Avatar UAT
-
-The installed package is `com.wallet.walkthedog.uat`. Version 3.34.0 blocks the emulator with a root/emulator alert. On 2026-09-26, the authentication case passed on a physical Samsung SM-S906E: the runner entered the locally configured test account, handled Android password-manager prompts without using or saving their credentials, and verified the authenticated **LOUNGE** tab. See [exploration notes](docs/aiavatar-exploration.md) and the reusable case at `runner-output/aiavatar-samsung-login-case.json` (local, Git-ignored).
-
 ## Run from the dashboard
 
 Prompt-driven MCP runs start the local dashboard and device bridge on demand when the dashboard dependencies are installed. The returned dashboard link uses the active local port, so it remains openable when the default port is already occupied. For manually launched dashboard runs, start the dashboard with `cd dashboard && npm run dev` and the local device bridge with `uv run python -m scout_mobile.local_server`; runs and safe evidence are saved automatically. See [dashboard runner setup](dashboard/README.md#run-scout-from-the-dashboard).
