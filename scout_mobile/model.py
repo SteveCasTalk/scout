@@ -1,5 +1,6 @@
 """TypeSafe's Jev operation/target choice protocol adapted to indexed mobile controls."""
 from __future__ import annotations
+from .config import getenv
 import json
 import math
 import os
@@ -47,7 +48,7 @@ def validate_choice(answer:dict[str,Any],keys:set[str])->str:
     return choice
 
 def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,Any]],platform:str='Android')->dict[str,Any]:
-    key=os.getenv('TYPESAFE_API_KEY')
+    key=getenv('TYPESAFE_API_KEY')
     if not key:raise ModelError('TYPESAFE_API_KEY is missing from local .env.')
     targets={op:{e.index:e for e in elements if op in e.operations and (op!='TYPE_TEXT' or not e.value or e.class_name.startswith('XCUIElementType'))} for op in ('TAP','TYPE_TEXT','SET_VALUE')}
     operations={op:description for op,description in [('TAP','Tap an observed control.'),('TYPE_TEXT','Fill an observed editable field.'),('SET_VALUE','Set an observed picker to an explicit user-provided value, or a slider to a user-provided normalized position from 0 to 1. Never guess a date or value.')] if targets[op]}
@@ -72,7 +73,7 @@ def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,A
         if candidates and op in operations:
             questions[op.lower()+'_target']={'type':'choice','criteria':{index:{'element':f'[{index}] {e.label}','role':e.role,'resource_id':e.resource_id,'current_value':'<redacted>' if e.sensitive and e.value else e.value,'checked':e.checked if e.checkable else None,'checkable':e.checkable,'focused':e.focused} for index,e in candidates.items()},'instructions':{'goal':goal,'operation':op,'rules':[POLICY,TARGET_POLICY]}}
     recent_actions=[{k:entry[k] for k in ('step','operation','label','elapsed_ms','page_changed') if k in entry} for entry in history[-10:]]
-    body={'model':os.getenv('TYPESAFE_MODEL','jev-latest'),'state':{'page':{'url':platform.lower()+'://device','title':'mobile app','text':page_text},'elements':[e.public() for e in elements],'recent_actions':recent_actions},'questions':questions}
+    body={'model':getenv('TYPESAFE_MODEL','jev-latest'),'state':{'page':{'url':platform.lower()+'://device','title':'mobile app','text':page_text},'elements':[e.public() for e in elements],'recent_actions':recent_actions},'questions':questions}
     started=time.perf_counter()
     result=post_json('https://api.typesafe.ai/v1/systemone',key,body)
     answers=result.get('answers',{})
@@ -85,10 +86,10 @@ def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,A
     return {'operation':operation,'target':target,'confidence':answers['operation']['confidence'],'model':result.get('model'),'latency_ms':jev['latency_ms'],'usage':result.get('usage',{}),'jev':jev}
 
 def field_text(goal:str,field:Element,page_text:str,history:list[dict[str,Any]])->str:
-    key=os.getenv('TEXT_MODEL_API_KEY')
+    key=getenv('TEXT_MODEL_API_KEY')
     if not key:raise ModelError('Non-credential text entry needs TEXT_MODEL_API_KEY in local .env.')
-    base=os.getenv('TEXT_MODEL_BASE_URL','https://api.deepseek.com/v1').rstrip('/')
-    model=os.getenv('TEXT_MODEL','deepseek-chat')
+    base=getenv('TEXT_MODEL_BASE_URL','https://api.deepseek.com/v1').rstrip('/')
+    model=getenv('TEXT_MODEL','deepseek-chat')
     body={'model':model,'max_tokens':512,'response_format':{'type':'json_object'},'messages':[{'role':'system','content':TEXT_POLICY},{'role':'user','content':json.dumps({'goal':goal,'field':field.public(),'page_text':page_text,'recent_actions':history[-6:]})}]}
     result=post_json(base+'/chat/completions',key,body)
     try:

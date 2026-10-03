@@ -7,16 +7,16 @@ import unittest
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from jev_mobile.agent import Agent,RunConfig,GUARD_TEXT
-from jev_mobile.device import AndroidDevice
-from jev_mobile.model import ModelError,validate_choice,choose
+from scout_mobile.agent import Agent,RunConfig,GUARD_TEXT
+from scout_mobile.device import AndroidDevice
+from scout_mobile.model import ModelError,validate_choice,choose
 
 STARTUP_XML='''<hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][1344,2992]" clickable="false"><node text="This application is not supported on rooted devices or emulators." class="android.widget.TextView" bounds="[264,1375][1080,1481]" clickable="false"/><node text="OK" class="android.widget.Button" bounds="[264,1553][1080,1703]" clickable="true"/></node></hierarchy>'''
 
 class RunnerSafetyTests(unittest.TestCase):
  def setUp(self):
   # This suite injects the legacy ADB transport; Appium has separate contracts.
-  backend=patch.dict(os.environ,{'JEV_ANDROID_DRIVER':'adb'})
+  backend=patch.dict(os.environ,{'SCOUT_ANDROID_DRIVER':'adb'})
   backend.start();self.addCleanup(backend.stop)
  def test_device_prompt_settings_are_restored_after_failed_run(self):
   from subprocess import CompletedProcess
@@ -83,7 +83,7 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual(save.operations,())
 
  def test_generic_date_gate_confirms_one_selected_value_then_submits_once(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   birthday=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   confirm=Element('2','button','Confirm','','Button','',(10,70,200,120),('TAP',),False)
   selected=Element('3','control','Saturday, January 1, 2000','','TextView','',(10,130,200,180),('TAP',),False,checked=True,checkable=True)
@@ -105,7 +105,7 @@ class RunnerSafetyTests(unittest.TestCase):
   ])
 
  def test_generic_date_gate_runs_before_jev_decisions(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   birthday=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   confirm=Element('2','button','Confirm','','Button','',(10,70,200,120),('TAP',),False)
   selected=Element('3','control','Saturday, January 1, 2000','','TextView','',(10,130,200,180),('TAP',),False,checked=True,checkable=True)
@@ -118,14 +118,14 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.wait_for_change.side_effect=[picker,form,feed]
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value={'operation':'DONE','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}) as chooser:
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',return_value={'operation':'DONE','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}) as chooser:
    result=Agent(RunConfig('example.other.app','fake',{'goal':'Reach the home feed'},Path(directory),expected_text='home feed ready',allow_consent=True)).run()
   self.assertEqual(result['status'],'Passed')
   self.assertEqual(chooser.call_count,1)
   self.assertEqual([entry['operation'] for entry in result['steps'][1:4]],['BASE_STEP_TAP']*3)
 
  def test_generic_date_gate_does_not_submit_without_consent_authorization(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   field=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   save=Element('2','button','Save','','Button','',(10,100,200,150),('TAP',),False)
   screen=Screen('',[field,save],'Your Birthday · By saving, I agree to Twomi Terms of Use and acknowledge the Privacy Policy · Save','before',1080,2340)
@@ -135,7 +135,7 @@ class RunnerSafetyTests(unittest.TestCase):
   agent.device.tap.assert_not_called()
 
  def test_generic_date_gate_never_changes_a_preselected_date(self):
-  from jev_mobile.device import DeviceError,Element,Screen
+  from scout_mobile.device import DeviceError,Element,Screen
   field=Element('1','button','Your Birthday','','Button','',(10,10,200,60),('TAP',),False)
   selected=Element('2','control','Friday, January 1, 2016','','TextView','',(10,70,200,120),('TAP',),False,checked=True,checkable=True)
   confirm=Element('3','button','Confirm','','Button','',(10,130,200,180),('TAP',),False)
@@ -165,7 +165,7 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertFalse(any('reset' in call.args for call in device.command.call_args_list))
 
  def test_tutorial_swipe_starts_inside_feed_not_bottom_controls(self):
-  from jev_mobile.device import Screen
+  from scout_mobile.device import Screen
   xml='<hierarchy><node scrollable="true" enabled="true" bounds="[0,0][1080,1721]"/><node scrollable="true" bounds="[0,1900][1080,2200]"/></hierarchy>'
   screen=Screen(xml,[],'Swipe up to select your companion','tutorial',1080,2340)
   device=AndroidDevice('fake');device.command=Mock()
@@ -184,7 +184,7 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertGreater(gesture['start'][1]-gesture['end'][1],2340*.50)
 
  def test_tutorial_dismissal_resumes_case_and_records_gesture(self):
-  from jev_mobile.device import Screen
+  from scout_mobile.device import Screen
   before=Screen('',[],'Swipe up to select your companion','tutorial',1080,2340)
   after=Screen('',[],'troy john','feed',1080,2340)
   fake=Mock();fake.wait_for_content.return_value=before;fake.observe.return_value=after
@@ -194,7 +194,7 @@ class RunnerSafetyTests(unittest.TestCase):
   gesture={'start':[270,1548],'end':[270,172],'duration_ms':300}
   fake.swipe_scrollable_next_item.return_value=gesture
   decisions=[{'operation':op,'target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}} for op in ('SWIPE_UP','DONE')]
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=decisions):
    result=Agent(RunConfig('app','fake',{'goal':'Reach the next feed item','steps':'Complete tutorial'},Path(directory),expected_text='troy john')).run()
   self.assertEqual(result['status'],'Passed')
   self.assertEqual(result['steps'][1]['gesture'],gesture)
@@ -202,21 +202,21 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.tap.assert_not_called()
 
  def test_startup_waits_for_splash_to_expose_accessible_content(self):
-  from jev_mobile.device import Screen
+  from scout_mobile.device import Screen
   device=AndroidDevice('fake')
   blank=Screen('<hierarchy/>',[],'','blank',1080,1920)
   ready=Screen('<hierarchy/>',[],'Welcome','ready',1080,1920)
   device.observe=Mock(side_effect=[blank,ready,ready])
-  with patch('jev_mobile.device.time.sleep'):
+  with patch('scout_mobile.device.time.sleep'):
    self.assertIs(device.wait_for_content(.5),ready)
 
  def test_startup_discards_stale_profile_hierarchy_until_new_screen_is_stable(self):
-  from jev_mobile.device import Screen
+  from scout_mobile.device import Screen
   device=AndroidDevice('fake')
   stale=Screen('<hierarchy/>',[],'Edit · Username','stale-profile',1080,2340)
   welcome=Screen('<hierarchy/>',[],'Welcome to Twomi · Continue','welcome',1080,2340)
   device.observe=Mock(side_effect=[stale,welcome,welcome])
-  with patch('jev_mobile.device.time.sleep'):
+  with patch('scout_mobile.device.time.sleep'):
    self.assertIs(device.wait_for_content(.5),welcome)
 
  def test_model_choice_cannot_name_unobserved_target(self):
@@ -224,8 +224,8 @@ class RunnerSafetyTests(unittest.TestCase):
   with self.assertRaises(ModelError):validate_choice(answer,{'1'})
 
  def test_credentials_are_redacted_from_model_view_and_output(self):
-  old_email=os.environ.get('JEV_TEST_EMAIL');old_password=os.environ.get('JEV_TEST_PASSWORD')
-  os.environ['JEV_TEST_EMAIL']='private@example.test';os.environ['JEV_TEST_PASSWORD']='DisposablePass123'
+  old_email=os.environ.get('SCOUT_TEST_EMAIL');old_password=os.environ.get('SCOUT_TEST_PASSWORD')
+  os.environ['SCOUT_TEST_EMAIL']='private@example.test';os.environ['SCOUT_TEST_PASSWORD']='DisposablePass123'
   try:
    device=AndroidDevice('fake');device.size=lambda:(1080,1920)
    xml='<hierarchy><node class="android.widget.EditText" resource-id="app:id/email" text="private@example.test" bounds="[1,1][400,90]" clickable="true" editable="true"/></hierarchy>'
@@ -237,10 +237,10 @@ class RunnerSafetyTests(unittest.TestCase):
     self.assertNotIn('private@example.test',public)
     self.assertIsNone(agent.screenshot(screen,0))
   finally:
-   if old_email is None:os.environ.pop('JEV_TEST_EMAIL',None)
-   else:os.environ['JEV_TEST_EMAIL']=old_email
-   if old_password is None:os.environ.pop('JEV_TEST_PASSWORD',None)
-   else:os.environ['JEV_TEST_PASSWORD']=old_password
+   if old_email is None:os.environ.pop('SCOUT_TEST_EMAIL',None)
+   else:os.environ['SCOUT_TEST_EMAIL']=old_email
+   if old_password is None:os.environ.pop('SCOUT_TEST_PASSWORD',None)
+   else:os.environ['SCOUT_TEST_PASSWORD']=old_password
 
  def test_post_login_evidence_only_captures_a_screen_without_inputs_or_email(self):
   import tempfile
@@ -265,7 +265,7 @@ class RunnerSafetyTests(unittest.TestCase):
    captured.append(body)
    keys=list(body['questions']['operation']['criteria'])
    return {'answers':{'operation':{'choice':'DONE','confidence':1,'probabilities':{key:int(key=='DONE') for key in keys}}},'model':'test'}
-  with patch.dict(os.environ,{'TYPESAFE_API_KEY':'test'}),patch('jev_mobile.model.post_json',side_effect=fake_post):
+  with patch.dict(os.environ,{'TYPESAFE_API_KEY':'test'}),patch('scout_mobile.model.post_json',side_effect=fake_post):
    choice=choose(screen.elements,screen.text,'Verify this screen',[])
   self.assertEqual(choice['operation'],'DONE')
   self.assertNotIn('WAIT',captured[0]['questions']['operation']['criteria'])
@@ -281,7 +281,7 @@ class RunnerSafetyTests(unittest.TestCase):
    captured.append(body)
    keys=list(body['questions']['operation']['criteria'])
    return {'answers':{'operation':{'choice':'SWIPE_UP','confidence':1,'probabilities':{key:int(key=='SWIPE_UP') for key in keys}}},'model':'test'}
-  with patch.dict(os.environ,{'TYPESAFE_API_KEY':'test'}),patch('jev_mobile.model.post_json',side_effect=fake_post):
+  with patch.dict(os.environ,{'TYPESAFE_API_KEY':'test'}),patch('scout_mobile.model.post_json',side_effect=fake_post):
    choice=choose(screen.elements,screen.text,'Open Profile',[])
   self.assertEqual(choice['operation'],'SWIPE_UP')
   self.assertEqual(set(captured[0]['questions']['operation']['criteria']),{'SWIPE_UP'})
@@ -298,7 +298,7 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.wait_for_change.return_value=screen
   fake.swipe_scrollable_next_item.return_value={'start':[270,1548],'end':[270,172],'duration_ms':300}
   answer={'operation':'SWIPE_UP','target':None,'confidence':1,'model':'test','latency_ms':1,'jev':{}}
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=answer):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',return_value=answer):
    result=Agent(RunConfig('app','fake',{'goal':'Open Profile'},Path(directory))).run()
   self.assertEqual(result['status'],'Inconclusive')
   self.assertIn('did not advance the screen',result['notes'])
@@ -312,7 +312,7 @@ class RunnerSafetyTests(unittest.TestCase):
    keys=list(body['questions']['operation']['criteria'])
    return {'answers':{'operation':{'choice':'WAIT','confidence':1,'probabilities':{key:int(key=='WAIT') for key in keys}}},'model':'test'}
   history=[{'step':4,'operation':'TAP','page_changed':True}]
-  with patch.dict(os.environ,{'TYPESAFE_API_KEY':'test'}),patch('jev_mobile.model.post_json',side_effect=fake_post):
+  with patch.dict(os.environ,{'TYPESAFE_API_KEY':'test'}),patch('scout_mobile.model.post_json',side_effect=fake_post):
    choice=choose([], '', 'Wait for the login response after Next', history)
   self.assertEqual(choice['operation'],'WAIT')
   self.assertIn('WAIT',captured[0]['questions']['operation']['criteria'])
@@ -325,7 +325,7 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   answer={'operation':'TAP','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}}
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=answer):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',return_value=answer):
    result=Agent(RunConfig('app','fake',{'goal':'Continue onboarding','steps':'Tap I Agree','expected':'Home'},Path(directory))).run()
   self.assertEqual(result['status'],'Inconclusive')
   self.assertIn('Explicit user confirmation',result['notes'])
@@ -345,7 +345,7 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   tap={'operation':'TAP','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}}
   done={'operation':'DONE','target':None,'confidence':.99,'model':'test','latency_ms':1,'jev':{}}
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=[tap,done]):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=[tap,done]):
    result=Agent(RunConfig('app','fake',{'goal':'Continue the authorized UAT flow','steps':'Tap Start','expected':'Sign in'},Path(directory),expected_text='Sign in',allow_consent=True)).run()
   self.assertEqual(result['status'],'Passed')
   fake.tap.assert_called_once()
@@ -358,7 +358,7 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   answer={'operation':'TAP','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}}
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=[answer,answer]):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=[answer,answer]):
    result=Agent(RunConfig('app','fake',{'goal':'Continue onboarding','steps':'Tap Continue','expected':'Sign in'},Path(directory),max_steps=4)).run()
   self.assertEqual(result['status'],'Inconclusive')
   self.assertIn('repeating TAP',result['notes'])
@@ -392,7 +392,7 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertTrue(focused.elements[0].public()['focused'])
 
  def test_mcp_run_yields_for_non_sensitive_text_and_resumes_without_recording_the_value(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   before=Screen('<hierarchy/>',[Element('1','textbox','Search','app:id/search','EditText','',(0,0,300,80),('TYPE_TEXT',),True)],'Search','before',1080,1920)
   focused=Screen('<hierarchy/>',[Element('1','textbox','Search','app:id/search','EditText','',(0,0,300,80),('TYPE_TEXT',),True,False,True)],'Search','focused',1080,1920)
   after=Screen('<hierarchy/>',[],'Results loaded','results',1080,1920)
@@ -400,7 +400,7 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   typed=[];fake.type_text.side_effect=lambda _field,value:typed.append(value)
   decisions=[{'operation':'TYPE_TEXT','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}},{'operation':'DONE','target':None,'confidence':.99,'model':'test','latency_ms':1,'jev':{}}]
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=decisions):
    agent=Agent(RunConfig('app','fake',{'goal':'Search for Jisoo','steps':'Enter Jisoo in the search field'},Path(directory),expected_text='Results loaded',mcp_host_text=True))
    pending=agent.run()
    self.assertEqual(pending['status'],'awaiting_input')
@@ -414,12 +414,12 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertNotIn('text',trace[1])
 
  def test_mcp_host_text_is_never_requested_for_one_time_codes(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   screen=Screen('<hierarchy/>',[Element('1','textbox','Verification code','app:id/otp','EditText','',(0,0,300,80),('TYPE_TEXT',),True,False,True)],'Verification code','otp',1080,1920)
   fake=Mock();fake.wait_for_content.return_value=screen;fake.observe.return_value=screen;fake.foreground.return_value='app';fake.installed.return_value=True
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   decision={'operation':'TYPE_TEXT','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}}
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=decision):
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',return_value=decision):
    result=Agent(RunConfig('app','fake',{'goal':'Complete the verification','steps':'Enter code'},Path(directory),mcp_host_text=True)).run()
   self.assertEqual(result['status'],'Execution error')
   self.assertIn('verification code',result['notes'])
@@ -472,7 +472,7 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertIsNone(Agent.screen_cycle(['feed','profile','menu','search']))
 
  def test_runner_stops_on_repeated_navigation_cycle_before_another_model_call(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   target=Element('1','button','More options','','Button','',(0,0,20,20),('TAP',),False)
   screens=[Screen('',[target],label,label,1080,1920) for label in ('feed','profile','menu')]
   fake=Mock();fake.wait_for_content.return_value=screens[0];fake.observe.return_value=screens[0]
@@ -481,14 +481,14 @@ class RunnerSafetyTests(unittest.TestCase):
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
   decision={'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}}
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',return_value=decision) as chooser:
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',return_value=decision) as chooser:
    result=Agent(RunConfig('app','fake',{'goal':'Open More options'},Path(directory),max_steps=20)).run()
   self.assertEqual(result['status'],'Inconclusive')
   self.assertIn('2-screen navigation cycle',result['notes'])
   self.assertEqual(chooser.call_count,5)
 
  def test_runner_allows_a_requested_return_to_an_earlier_screen(self):
-  from jev_mobile.device import Element,Screen
+  from scout_mobile.device import Element,Screen
   back=Element('1','button','Back','','Button','',(0,0,20,20),('TAP',),False)
   edit=Element('1','button','Edit','','Button','',(0,0,20,20),('TAP',),False)
   before=Screen('',[back],'Username · Back','edit',1080,1920)
@@ -504,18 +504,18 @@ class RunnerSafetyTests(unittest.TestCase):
    {'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}},
    {'operation':'DONE','target':None,'confidence':.9,'model':'test','latency_ms':1,'jev':{}},
   ]
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose',side_effect=decisions) as chooser:
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=decisions) as chooser:
    result=Agent(RunConfig('app','fake',{'goal':'Return to the edit prompt through Profile'},Path(directory),expected_text='Username')).run()
   self.assertEqual(result['status'],'Passed')
   self.assertEqual(chooser.call_count,3)
 
  def test_read_only_visible_assertion_skips_model_round_trip(self):
-  from jev_mobile.device import Screen
+  from scout_mobile.device import Screen
   before=Screen('',[],'Username visible on profile','profile',1080,1920)
   fake=Mock();fake.wait_for_content.return_value=before;fake.foreground.return_value='app';fake.installed.return_value=True
   fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
   fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
-  with tempfile.TemporaryDirectory() as directory,patch('jev_mobile.agent.AndroidDevice',return_value=fake),patch('jev_mobile.agent.choose') as chooser:
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose') as chooser:
    result=Agent(RunConfig('app','fake',{'goal':'Verify the profile username is visible','steps':''},Path(directory),expected_text='Username visible')).run()
   self.assertEqual(result['status'],'Passed')
   chooser.assert_not_called()
@@ -523,7 +523,7 @@ class RunnerSafetyTests(unittest.TestCase):
   json.dumps(result)
 
  def test_mcp_allows_step_free_read_only_verification_only_with_exact_assertion(self):
-  from jev_mobile.validation import validate_prompt_steps
+  from scout_mobile.validation import validate_prompt_steps
   validate_prompt_steps('Verify the username is visible','', 'Username')
   with self.assertRaisesRegex(ValueError,'read-only verification goal'):
    validate_prompt_steps('Search for a username','', 'Username')
@@ -534,7 +534,7 @@ class RunnerSafetyTests(unittest.TestCase):
   from subprocess import CompletedProcess
   device=AndroidDevice('fake')
   device.command=Mock(return_value=CompletedProcess([],0,b'Physical size: 1080x2340\n',b''))
-  with patch('jev_mobile.device.time.monotonic',side_effect=[0.0,.5,3.0,3.0]):
+  with patch('scout_mobile.device.time.monotonic',side_effect=[0.0,.5,3.0,3.0]):
    self.assertEqual(device.size(),(1080,2340))
    self.assertEqual(device.size(),(1080,2340))
    self.assertEqual(device.size(),(1080,2340))

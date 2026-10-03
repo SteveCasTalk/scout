@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { context, failure, HttpError, jsonBody } from '@/lib/server';
 const bodyInput = z.object({ body: z.string().trim().min(1).max(4000) });
-const createInput = bodyInput.extend({ target_type: z.enum(['case', 'run']), target_id: z.string().uuid() });
+const createInput = bodyInput.extend({ workspace_id: z.string().uuid().optional(), target_type: z.enum(['case', 'run']), target_id: z.string().uuid() });
 const editInput = bodyInput.extend({ id: z.string().uuid() });
 const deleteInput = z.object({ id: z.string().uuid() });
 export async function GET(request: Request) { try {
@@ -19,6 +19,7 @@ export async function POST(request: Request) { try {
     const table = value.target_type === 'case' ? 'test_cases' : 'runs';
     const target = await db.prepare(`SELECT workspace_id FROM ${table} WHERE id=? AND owner=?`).bind(value.target_id, owner).first<{workspace_id:string}>();
     if (!target) throw new HttpError(404, 'Case or run not found.');
+    if (value.workspace_id && target.workspace_id !== value.workspace_id) throw new HttpError(404, 'Case or run not found in this workspace.');
     const id = crypto.randomUUID(), now = new Date().toISOString();
     await db.prepare('INSERT INTO review_notes (id,owner,workspace_id,target_type,target_id,body,created,updated) VALUES (?,?,?,?,?,?,?,?)').bind(id, owner, target.workspace_id, value.target_type, value.target_id, value.body, now, now).run();
     return Response.json({ id, workspace_id: target.workspace_id, target_type: value.target_type, target_id: value.target_id, body: value.body, created: now, updated: now }, { status: 201 });

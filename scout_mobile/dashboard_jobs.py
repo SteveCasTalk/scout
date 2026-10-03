@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from .agent import Agent, RunConfig
-from .config import ROOT
+from .config import ROOT,getenv
 from .devices import connected
 
 JOBS: dict[str, dict] = {}
@@ -22,7 +22,7 @@ def snapshot(job_id: str) -> dict | None:
             import json
             try:
                 result = json.loads(path.read_text(encoding='utf-8'))
-                return {'run_id': job_id, 'status': 'completed', 'steps': [], 'result': result, 'artifacts': [p.name for p in path.parent.iterdir() if p.is_file() and (p.suffix in {'.png', '.mp4'} or p.name in {'trace.json', 'jev-output.json'})]}
+                return {'run_id': job_id, 'status': 'completed', 'steps': [], 'result': result, 'artifacts': [p.name for p in path.parent.iterdir() if p.is_file() and (p.suffix in {'.png', '.mp4'} or p.name in {'trace.json', 'jev-output.json', 'sandbox.json'})]}
             except (OSError, ValueError):
                 return None
         return {key: value for key, value in job.items() if not key.startswith('_')}
@@ -54,7 +54,7 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
     if case.get('platform') not in {'Android', 'iOS'}:
         raise ValueError('Select Android or iOS on the case.')
     serial = payload.get('serial')
-    adb = os.getenv('ADB_PATH') or 'adb'
+    adb = getenv('ADB_PATH') or 'adb'
     if not isinstance(serial, str) or serial not in connected(case['platform'], adb):
         raise ValueError('Select a connected device for this case’s platform.')
     steps = payload.get('max_steps', 40)
@@ -71,6 +71,16 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
         raise ValueError('Another dashboard run is active. Wait for it to finish.')
     job_id = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     output = ROOT / 'runner-output' / job_id
+    if payload.get('retain_saved_case') is True:
+        try:
+            import json
+            output.mkdir(parents=True, exist_ok=True)
+            pinned = output / '.saved-case.json'
+            pinned.write_text(json.dumps(case, ensure_ascii=False), encoding='utf-8')
+            pinned.chmod(0o600)
+        except Exception:
+            run_lock.release()
+            raise
     with LOCK:
         # Keep active jobs and a bounded recent completion history.
         for key in list(JOBS):
@@ -78,7 +88,7 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
                 break
             if JOBS[key]['status'] in {'completed', 'error'}:
                 del JOBS[key]
-        JOBS[job_id] = {'run_id': job_id, 'case_id': case['id'], 'status': 'running', 'started': time.time(), 'steps': [], 'text_request': None, '_stop': threading.Event(), '_wake': threading.Event(), '_text': None}
+        JOBS[job_id] = {'run_id': job_id, 'case_id': case['id'], 'status': 'running', 'started': time.time(), 'steps': [], 'text_request': None, 'cleanup_complete': False, '_stop': threading.Event(), '_wake': threading.Event(), '_text': None}
     def worker():
         agent = None
         try:
@@ -112,7 +122,7 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
                 with LOCK:
                     job['text_request'] = None
             progress(agent.history)
-            artifacts = sorted(p.name for p in output.iterdir() if p.is_file() and (p.suffix in {'.png', '.mp4'} or p.name in {'trace.json', 'result.json', 'jev-output.json'}))
+            artifacts = sorted(p.name for p in output.iterdir() if p.is_file() and (p.suffix in {'.png', '.mp4'} or p.name in {'trace.json', 'result.json', 'jev-output.json', 'sandbox.json'}))
             with LOCK:
                 job.update(status='completed', result=result, artifacts=artifacts, text_request=None)
         except Exception as exc:
@@ -120,10 +130,17 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
             with LOCK:
                 JOBS[job_id].update(status='error', error=message[:500])
         finally:
-            if agent:
-                if agent._continuation is not None:agent._continuation.close()
-                agent.device.close()
-            run_lock.release()
+            try:
+                if agent:
+                    if agent._continuation is not None:agent._continuation.close()
+                    agent.device.close()
+            except Exception:
+                with LOCK:
+                    JOBS[job_id]['cleanup_error']='Device session cleanup failed. Check the device before running again.'
+            finally:
+                with LOCK:
+                    JOBS[job_id]['cleanup_complete']=True
+                run_lock.release()
     try:
         threading.Thread(target=worker, daemon=True).start()
     except Exception:

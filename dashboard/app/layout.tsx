@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { brand } from '@/lib/brand';
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Jev Mobile · Test workspace",
-  description: "Test cases, mobile test runs, and evidence in one workspace.",
+  title: `${brand.name} · Test workspace`,
+  description: brand.description,
   other: {
     "codex-preview": "development",
   },

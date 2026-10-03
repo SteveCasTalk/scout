@@ -5,16 +5,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from jev_mobile.appium_device import AppiumAndroidDevice
-from jev_mobile.device import DeviceError
-from jev_mobile.agent import Agent, RunConfig
+from scout_mobile.appium_device import AppiumAndroidDevice
+from scout_mobile.device import DeviceError
+from scout_mobile.agent import Agent, RunConfig
 
 XML = '<hierarchy><android.widget.Button text="Continue" class="android.widget.Button" resource-id="app:id/continue" bounds="[10,20][110,70]" enabled="true" clickable="true"/></hierarchy>'
 
 
 class AppiumAdapterTests(unittest.TestCase):
     def test_appium_is_default_and_adb_is_an_explicit_override(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'JEV_ANDROID_DRIVER': ''}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'SCOUT_ANDROID_DRIVER': ''}):
             default = Agent(RunConfig('app', 'fake', {}, Path(directory)))
             self.assertIsInstance(default.device, AppiumAndroidDevice)
             self.assertEqual(default.device.idle_timeout_ms, 1000)
@@ -22,14 +22,14 @@ class AppiumAdapterTests(unittest.TestCase):
             self.assertEqual(fallback.backend, 'adb')
 
     def test_ready_appium_server_is_reused_without_starting_process(self):
-        from jev_mobile.appium_runtime import ensure_appium
-        with patch('jev_mobile.appium_runtime._ready', return_value=True), patch('jev_mobile.appium_runtime.subprocess.Popen') as start:
+        from scout_mobile.appium_runtime import ensure_appium
+        with patch('scout_mobile.appium_runtime._ready', return_value=True), patch('scout_mobile.appium_runtime.subprocess.Popen') as start:
             ensure_appium('http://127.0.0.1:4723')
             start.assert_not_called()
 
     def test_unavailable_custom_endpoint_is_not_replaced(self):
-        from jev_mobile.appium_runtime import ensure_appium
-        with patch('jev_mobile.appium_runtime._ready', return_value=False), patch('jev_mobile.appium_runtime.subprocess.Popen') as start:
+        from scout_mobile.appium_runtime import ensure_appium
+        with patch('scout_mobile.appium_runtime._ready', return_value=False), patch('scout_mobile.appium_runtime.subprocess.Popen') as start:
             with self.assertRaisesRegex(DeviceError, 'configured Appium server is unavailable'):
                 ensure_appium('http://127.0.0.1:4999')
             start.assert_not_called()
@@ -84,7 +84,7 @@ class AppiumAdapterTests(unittest.TestCase):
 
     def test_runner_closes_session_after_a_blocked_run(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch('jev_mobile.appium_device.AppiumAndroidDevice') as constructor:
+            with patch('scout_mobile.appium_device.AppiumAndroidDevice') as constructor:
                 constructor.return_value.installed.return_value = False
                 agent = Agent(RunConfig('app', 'fake', {}, Path(directory), backend='appium'))
                 agent.capture_device_info = lambda: {'automation_backend': 'appium'}

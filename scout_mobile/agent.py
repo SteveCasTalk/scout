@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Callable
-from .config import ROOT
+from .config import ROOT,getenv
 from .device import AndroidDevice, DeviceError, Element, Screen
 from .model import ModelError, choose, field_text
 from .checkpoints import validate_checkpoints, evaluate as evaluate_checkpoints
@@ -53,19 +53,19 @@ class Agent:
         if config.platform and config.test_case.get('platform') and config.platform!=config.test_case['platform']:raise ValueError('Run platform conflicts with the test case.')
         self.platform=config.platform or config.test_case.get('platform') or 'Android'
         if self.platform not in {'Android','iOS'}:raise ValueError('Platform must be Android or iOS.')
-        backend=config.backend or ('appium' if self.platform=='iOS' else os.getenv('JEV_ANDROID_DRIVER') or 'appium')
+        backend=config.backend or ('appium' if self.platform=='iOS' else getenv('SCOUT_ANDROID_DRIVER') or 'appium')
         if self.platform=='iOS' and backend!='appium':raise ValueError('iOS requires Appium/XCUITest.')
         self.backend=backend
         if self.platform=='iOS':
             from .ios_device import AppiumIOSDevice
-            self.device=AppiumIOSDevice(config.serial,config.package,config.appium_url or os.getenv('JEV_APPIUM_URL') or 'http://127.0.0.1:4723')
+            self.device=AppiumIOSDevice(config.serial,config.package,config.appium_url or getenv('SCOUT_APPIUM_URL') or 'http://127.0.0.1:4723')
         elif backend=='appium':
             from .appium_device import AppiumAndroidDevice
-            self.device=AppiumAndroidDevice(config.serial,config.adb,config.appium_url or os.getenv('JEV_APPIUM_URL') or 'http://127.0.0.1:4723')
+            self.device=AppiumAndroidDevice(config.serial,config.adb,config.appium_url or getenv('SCOUT_APPIUM_URL') or 'http://127.0.0.1:4723')
         elif backend=='adb':
             self.device=AndroidDevice(config.serial,config.adb)
         else:
-            raise ValueError('JEV_ANDROID_DRIVER must be adb or appium.')
+            raise ValueError('SCOUT_ANDROID_DRIVER must be adb or appium.')
         self.history:list[dict[str,Any]]=[]
         self.checkpoints=validate_checkpoints(config.test_case.get('checkpoints', []))
         self.starting_conditions=validate_starting_conditions(config.test_case.get('starting_conditions'))
@@ -73,14 +73,15 @@ class Agent:
         self.checkpoint_observations=[]
         self.checkpoint_verdicts={item['id']:{**item,'verdict':'not_reached','confidence':0.0,'reason':'Checkpoint has not been evaluated.','evidence_steps':[],'observed':''} for item in self.checkpoints}
         self.started=time.monotonic()
+        self.sandbox_session=None
         self.credential_used=False
         self.instruction_swipe_attempted=False
         self.date_gate_attempted=False
         self.verification={'status':'not_run','method':'exact_visible_text','expected_text':config.expected_text,'observed_text':''}
         self.output=config.output
         self.output.mkdir(parents=True,exist_ok=True)
-        self.test_email=config.test_email or os.getenv('JEV_TEST_EMAIL','')
-        self.test_password=config.test_password or os.getenv('JEV_TEST_PASSWORD','')
+        self.test_email=config.test_email or getenv('SCOUT_TEST_EMAIL','')
+        self.test_password=config.test_password or getenv('SCOUT_TEST_PASSWORD','')
         self.secrets=[s for s in (self.test_email,self.test_password) if s]
         self.checkpoints=self.redact_object(self.checkpoints)
         self.checkpoint_verdicts=self.redact_object(self.checkpoint_verdicts)
@@ -254,8 +255,20 @@ class Agent:
             if status not in {'Execution error','Blocked'} and (status=='Passed' or self.checkpoint_outcome()=='Failed'):status=self.checkpoint_outcome()
             reason=reason+' Checkpoints: '+', '.join(item['id']+'='+item['verdict'] for item in self.checkpoint_verdicts.values())
             self.history.append({'step':max((item['step'] for item in self.history),default=-1)+1,'elapsed_ms':self.elapsed_ms(),'operation':'VERIFY_CHECKPOINTS','checkpoint_results':list(self.checkpoint_verdicts.values()),'screenshot':None})
+        sandbox_report=None
+        if self.sandbox_session:
+            self.sandbox_session.stop()
+            sandbox_report=self.sandbox_session.report()
+            if sandbox_report['status']!='satisfied' and status not in {'Blocked','Execution error'}:
+                status='Inconclusive'
+                reason+=' Sandbox evidence incomplete: required rule hits missing or proxy requests blocked. This does not establish an app bug.'
         device_info=self.capture_device_info()
-        result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'starting_conditions':self.redact_object(self.starting_conditions),'starting_condition_results':self.redact_object(self.starting_condition_results),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Jev iOS runner' if self.platform=='iOS' else 'Jev Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':self.platform,'device':self.config.serial,'build':device_info.get('app_version','unknown'),'device_info':device_info,'app_logs':self.capture_app_logs(),'status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False}
+        result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'starting_conditions':self.redact_object(self.starting_conditions),'starting_condition_results':self.redact_object(self.starting_condition_results),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Scout iOS runner' if self.platform=='iOS' else 'Scout Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':self.platform,'device':self.config.serial,'build':device_info.get('app_version','unknown'),'device_info':device_info,'app_logs':self.capture_app_logs(),'status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False}
+        if sandbox_report:
+            result['sandbox']=sandbox_report
+            result['sandbox_scenario']=self.sandbox_session.scenario
+        if case.get('matrix'):
+            result['matrix']=case['matrix']
         (self.output/'result.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         (self.output/'trace.json').write_text(json.dumps(self.history,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         jev_calls=[{'step':entry['step'],**entry['jev']} for entry in self.history if 'jev' in entry]
@@ -354,13 +367,13 @@ class Agent:
 
     def run(self)->dict[str,Any]:
         if self._continuation is not None:
-            raise ModelError('This Jev run is paused; continue it with resume_text().')
+            raise ModelError('This Scout run is paused; continue it with resume_text().')
         self._continuation=self._run_loop()
         return self._advance(start=True)
 
     def resume_text(self,value:str)->dict[str,Any]:
         if self._continuation is None or not self._pending_text:
-            raise ModelError('This Jev run is not waiting for text input.')
+            raise ModelError('This Scout run is not waiting for text input.')
         if not isinstance(value,str) or not value.strip() or len(value)>200:
             raise ModelError('Text input must contain 1–200 characters.')
         return self._advance(value)
@@ -382,6 +395,16 @@ class Agent:
     def _run_loop(self)->dict[str,Any]:
         screen=None
         try:
+            if self.config.test_case.get('sandbox'):
+                from .sandbox import Session
+                try:
+                    fixture=self.config.test_case['sandbox']
+                    if any(secret in json.dumps(fixture) for secret in self.secrets):
+                        raise ValueError('Sandbox fixtures must not contain locally configured credentials. Use synthetic values.')
+                    self.sandbox_session=Session(fixture,self.output)
+                    self.sandbox_session.start()
+                except (ValueError,OSError) as exc:
+                    return self.write_result('Blocked','Sandbox prerequisite missing: '+str(exc),None)
             if not self.device.installed(self.config.package):
                 self.starting_condition_results=[{'kind':'app_installed','expected':self.config.package,'actual':'Not installed','status':'missing','reason':'The required app package is not installed on this device.','observed_step':0}]
                 self.history.append({'step':0,'elapsed_ms':self.elapsed_ms(),'operation':'CHECK_STARTING_CONDITIONS','starting_condition_results':self.starting_condition_results,'screenshot':None})
@@ -547,7 +570,7 @@ class Agent:
                             value,kind=credential
                             if not value:
                                 self.history.append(entry)
-                                return self.write_result('Execution error',f'JEV_TEST_{kind.upper()} is missing from local .env.',screen)
+                                return self.write_result('Execution error',f'SCOUT_TEST_{kind.upper()} is missing from local .env.',screen)
                             self.credential_used=True
                             entry['text_source']=f'local {kind} credential'
                         else:
@@ -629,4 +652,5 @@ class Agent:
         except (DeviceError,ModelError,OSError,ValueError) as exc:
             return self.write_result('Execution error',str(exc),screen)
         finally:
+            if self.sandbox_session:self.sandbox_session.stop()
             self.device.close()

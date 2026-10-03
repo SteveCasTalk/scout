@@ -10,6 +10,6 @@ export function RunRecordings({ files }: { files: Evidence[] }) {
         {recordings.length ? recordings.map((file, index) => <div className="run-recording" id={`recording-${file.id}`} key={file.id}>
             <div><b>Recording {index + 1}</b><a href={`/api/evidence/${file.id}`} download={file.name}><Download size={14}/> Download</a></div>
             <video controls playsInline preload="metadata" src={`/api/evidence/${file.id}`} aria-label={`Screen recording ${index + 1}`}/>
-        </div>) : <p>No recording is attached to this run. Use Sync MCP runs in Test cases to import a saved recording, or Attach evidence to upload one.</p>}
+        </div>) : <p>No recording is attached to this run. Use Refresh in Test cases with the local runner connected to sync a saved recording, or Attach evidence to upload one.</p>}
     </section>;
 }

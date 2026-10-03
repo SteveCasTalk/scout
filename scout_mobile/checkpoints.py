@@ -1,5 +1,6 @@
-"""Evidence-grounded checkpoint classification for Jev runs."""
+"""Evidence-grounded checkpoint classification for Scout runs."""
 from __future__ import annotations
+from .config import getenv
 import os
 import json
 import re
@@ -60,10 +61,10 @@ def evaluate(checkpoints, observations, goal, final=False):
         questions[f'check_{index}'] = {'type': 'choice', 'criteria': VERDICTS, 'instructions': {**instructions, 'observations': pool}}
         questions[f'evidence_{index}'] = {'type': 'choice', 'criteria': {'none': 'No direct supporting evidence', **{key: value for key, value in pool.items()}}, 'instructions': {**instructions, 'task': 'Select the observed step that directly supports your verdict; otherwise choose none.'}}
     if questions:
-        key = os.getenv('TYPESAFE_API_KEY')
+        key = getenv('TYPESAFE_API_KEY')
         if not key:
             raise ModelError('TYPESAFE_API_KEY missing for checkpoint verification.')
-        response = post_json('https://api.typesafe.ai/v1/systemone', key, {'model': os.getenv('TYPESAFE_MODEL', 'jev-latest'), 'state': {'goal': goal}, 'questions': questions})
+        response = post_json('https://api.typesafe.ai/v1/systemone', key, {'model': getenv('TYPESAFE_MODEL', 'jev-latest'), 'state': {'goal': goal}, 'questions': questions})
         for index, checkpoint in enumerate(checkpoints):
             if f'check_{index}' not in questions:
                 continue
@@ -77,5 +78,5 @@ def evaluate(checkpoints, observations, goal, final=False):
                 reason = f'Classifier proposed {verdict}, but ' + ('no supporting observation was selected.' if ref == 'none' else f'decision/evidence confidence {confidence:.2f} was below the 0.85 threshold.')
                 verdict = 'not_observable'
             observation = evidence.get(ref)
-            results.append({**checkpoint, 'verdict': verdict, 'confidence': confidence, 'reason': reason + (f' Supporting observation: step {int(ref)+1}.' if ref != 'none' else ' No supporting step was selected.'), 'evidence_steps': [int(ref)] if ref != 'none' else [], 'observed': (observation['text'][:3000] + '\nControl states: ' + json.dumps(observation.get('elements', []), ensure_ascii=False)[:4500]) if observation else '', 'model': response.get('model') or os.getenv('TYPESAFE_MODEL', 'jev-latest'), 'probabilities': answer['probabilities']})
+            results.append({**checkpoint, 'verdict': verdict, 'confidence': confidence, 'reason': reason + (f' Supporting observation: step {int(ref)+1}.' if ref != 'none' else ' No supporting step was selected.'), 'evidence_steps': [int(ref)] if ref != 'none' else [], 'observed': (observation['text'][:3000] + '\nControl states: ' + json.dumps(observation.get('elements', []), ensure_ascii=False)[:4500]) if observation else '', 'model': response.get('model') or getenv('TYPESAFE_MODEL', 'jev-latest'), 'probabilities': answer['probabilities']})
     return results

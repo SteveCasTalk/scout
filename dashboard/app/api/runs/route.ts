@@ -15,14 +15,14 @@ export async function POST(request: Request) { try {
         const previous = await db.prepare('SELECT id FROM runs WHERE owner=? AND external_run_id=?').bind(owner, r.externalRunId).first<{id:string}>();
         if (previous) return Response.json({ id: previous.id, duplicate: true }, { status: 200 });
     }
-    const c = await db.prepare('SELECT id,workspace_id,project,ticket_key,app_id,title,platform,suite,goal,preconditions,steps,expected,assertion_text,checkpoints_json,starting_conditions_json,revision,updated FROM test_cases WHERE id=? AND owner=?').bind(r.caseId, owner).first<{workspace_id:string; revision:number; checkpoints_json:string; starting_conditions_json:string}>();
+    const c = await db.prepare('SELECT id,workspace_id,project,ticket_key,comparison_key,sandbox_json,app_id,title,platform,suite,goal,preconditions,steps,expected,assertion_text,checkpoints_json,starting_conditions_json,revision,updated FROM test_cases WHERE id=? AND owner=?').bind(r.caseId, owner).first<{workspace_id:string; revision:number; checkpoints_json:string; starting_conditions_json:string; sandbox_json:string}>();
     if (!c)
         throw new HttpError(404, 'Test case not found.');
     if (c.revision !== r.revision)
         throw new HttpError(409, 'The test changed. Reload it before recording this run.');
     if (JSON.stringify(r.trace).length > 200000) throw new HttpError(413, 'Runner trace is too large.');
-    const { checkpoints_json, starting_conditions_json, ...fields } = c;
-    const snapshot = { ...fields, checkpoints: JSON.parse(checkpoints_json || '[]'), starting_conditions: startingConditionsInput.parse(JSON.parse(starting_conditions_json || '{}')) };
+    const { sandbox_json, checkpoints_json, starting_conditions_json, ...fields } = c;
+    const snapshot = { ...fields, sandbox: JSON.parse(sandbox_json || 'null'), checkpoints: JSON.parse(checkpoints_json || '[]'), starting_conditions: startingConditionsInput.parse(JSON.parse(starting_conditions_json || '{}')) };
     const id = crypto.randomUUID(), created = new Date().toISOString();
     await db.prepare('INSERT INTO runs (id,owner,workspace_id,case_id,external_run_id,snapshot,status,build,device,device_info_json,app_logs,notes,source,trace_json,created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id, owner, c.workspace_id, r.caseId, r.externalRunId || null, JSON.stringify(snapshot), r.status, r.build, r.device, JSON.stringify(r.device_info), r.app_logs, r.notes, r.source, JSON.stringify(r.trace), created).run();
     return Response.json({ ...r, id, workspace_id: c.workspace_id, case_id: r.caseId, snapshot, created }, { status: 201 });

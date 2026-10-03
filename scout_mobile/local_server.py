@@ -1,4 +1,4 @@
-"""Loopback-only HTTP bridge between the local dashboard and Jev's ADB runner."""
+"""Loopback-only bridge between the Scout dashboard and mobile runner."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,14 +12,15 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .agent import Agent, RunConfig
 from . import dashboard_jobs
-from .config import ROOT, load_local_env
+from .config import ROOT, load_local_env, getenv
 from .devices import connected
+from .branding import PRODUCT_NAME
 
 
 load_local_env()
 HOST = "127.0.0.1"
-PORT = int(os.getenv("JEV_LOCAL_RUNNER_PORT", "8765"))
-PACKAGE = os.getenv("JEV_APP_PACKAGE", "com.wallet.walkthedog.uat")
+PORT = int(getenv("SCOUT_LOCAL_RUNNER_PORT", "8765"))
+PACKAGE = getenv("SCOUT_APP_PACKAGE", "com.wallet.walkthedog.uat")
 ALLOWED_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 MAX_BODY = 1_000_000
 RUN_LOCK = threading.Lock()
@@ -27,7 +28,7 @@ CASE_FIELDS = ("id", "revision", "goal", "steps", "expected")
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "JevLocalRunner/1.0"
+    server_version = "ScoutLocalRunner/1.0"
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -73,9 +74,34 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self._json(200, {"status": "ready"})
             return
+        session_match = re.fullmatch(r'/library-sessions/([A-Za-z0-9_-]{1,80})',parsed.path)
+        if session_match:
+            try:
+                from .library_sessions import SESSIONS
+                value=SESSIONS.snapshot(session_match.group(1))
+                self._json(200 if value else 404,value or {'error':'Saved-library session not found.'})
+            except (ValueError,OSError) as exc:
+                self._json(400,{'error':str(exc)[:300]})
+            return
+        if parsed.path == "/sandbox":
+            try:
+                from .sandbox import diagnose, list_scenarios
+                self._json(200, {"diagnostics": diagnose(), "scenarios": list_scenarios()})
+            except (ValueError, OSError) as exc:
+                self._json(400, {"error": str(exc)[:300]})
+            return
+        recording_match = re.fullmatch(r"/sandbox/recordings/([A-Za-z0-9_-]{1,60})", parsed.path)
+        if parsed.path == "/sandbox/recordings" or recording_match:
+            try:
+                from .sandbox_recording import MANAGER, list_recordings
+                value = MANAGER.get(recording_match.group(1), parse_qs(parsed.query).get('bodies', ['1'])[0] != '0') if recording_match else {'recordings': list_recordings()}
+                self._json(200, value)
+            except (ValueError, OSError) as exc:
+                self._json(400, {'error': str(exc)[:300]})
+            return
         if parsed.path == "/devices":
             try:
-                adb = os.getenv("ADB_PATH") or "adb"
+                adb = getenv("ADB_PATH") or "adb"
                 self._json(200, {"devices": connected(parse_qs(parsed.query).get("platform", ["Android"])[0], adb)})
             except Exception as exc:
                 self._json(503, {"error": f"Could not query devices: {type(exc).__name__}"})
@@ -99,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     if not isinstance(result, dict) or not str(result.get("case_id", "")).startswith("prompt-"):
                         continue
-                    artifacts = sorted(path.name for path in folder.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json", "run-verification.json"}))
+                    artifacts = sorted(path.name for path in folder.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json", "run-verification.json", "sandbox.json"}))
                     runs.append({"run_id": folder.name, "result": result, "artifacts": artifacts})
             page = runs[:50]
             next_cursor = page[-1]["run_id"] if len(runs) > 50 else None
@@ -109,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             run_id, encoded_name = match.groups()
             name = unquote(encoded_name)
-            if name not in {"result.json", "trace.json", "jev-output.json", "run-verification.json"} and not re.fullmatch(r"\d{3}\.png|screen-recording-\d+\.mp4", name):
+            if name not in {"result.json", "trace.json", "jev-output.json", "run-verification.json", "sandbox.json"} and not re.fullmatch(r"\d{3}\.png|screen-recording-\d+\.mp4", name):
                 self._json(400, {"error": "Unsupported artifact."})
                 return
             root = (ROOT / "runner-output").resolve()
@@ -133,6 +159,66 @@ class Handler(BaseHTTPRequestHandler):
             self._json(403, {"error": "Origin is not allowed."})
             return
         path = urlsplit(self.path).path
+        session_match=re.fullmatch(r'/library-sessions/([A-Za-z0-9_-]{1,80})/(input|stop)',path)
+        if path=='/library-sessions' or session_match:
+            try:
+                length=self.headers.get('Content-Length','')
+                if not length.isdigit() or int(length)>MAX_BODY:
+                    raise ValueError('Request must contain at most 1 MB of JSON.')
+                packet=json.loads(self.rfile.read(int(length)))
+                if not isinstance(packet,dict):raise ValueError('Expected a JSON object.')
+                from .library_sessions import SESSIONS
+                value=SESSIONS.start(packet,RUN_LOCK) if not session_match else SESSIONS.respond(session_match.group(1),packet.get('text'),session_match.group(2)=='stop')
+                self._json(202,value)
+            except (ValueError,OSError,KeyError,TypeError) as exc:
+                self._json(400,{'error':str(exc)[:300]})
+            return
+        recording_match = re.fullmatch(r"/sandbox/recordings/([A-Za-z0-9_-]{1,60})/(stop|draft)", path)
+        if path == '/sandbox/recordings' or recording_match:
+            try:
+                length = self.headers.get('Content-Length', '')
+                if not length.isdigit() or int(length) > MAX_BODY:
+                    raise ValueError('Request must contain at most 1 MB of JSON.')
+                packet = json.loads(self.rfile.read(int(length)))
+                if not isinstance(packet, dict):
+                    raise ValueError('Expected a JSON object.')
+                from .sandbox_recording import MANAGER, draft
+                if not recording_match:
+                    value = MANAGER.start(packet)
+                elif recording_match.group(2) == 'stop':
+                    value = MANAGER.stop(recording_match.group(1))
+                    if parse_qs(urlsplit(self.path).query).get('bodies', ['1'])[0] == '0':
+                        value['records'] = [{key: item for key, item in record.items() if key != 'body'} for record in value['records']]
+                else:
+                    value = draft(recording_match.group(1), packet.get('capture_ids'), packet.get('scenario_id'), packet.get('name'))
+                self._json(200, value)
+            except (ValueError, OSError) as exc:
+                self._json(400, {'error': str(exc)[:300]})
+            return
+        if path in {"/sandbox", "/sandbox/certificate"}:
+            try:
+                length = self.headers.get("Content-Length", "")
+                if not length.isdigit() or int(length) > MAX_BODY:
+                    raise ValueError("Request must contain at most 1 MB of JSON.")
+                from .sandbox import save_scenario, prepare_certificate
+                packet = json.loads(self.rfile.read(int(length)))
+                self._json(200, prepare_certificate() if path.endswith("/certificate") else save_scenario(packet))
+            except (ValueError, UnicodeDecodeError, OSError) as exc:
+                self._json(400, {"error": str(exc)[:300]})
+            return
+        if path == "/compare-platforms":
+            try:
+                length = self.headers.get("Content-Length", "")
+                if not length.isdigit() or int(length) > MAX_BODY:
+                    raise ValueError("Request must contain at most 1 MB of JSON.")
+                packet = json.loads(self.rfile.read(int(length)))
+                from .platform_comparison import assess
+                self._json(200, assess(packet))
+            except (ValueError, UnicodeDecodeError) as exc:
+                self._json(400, {"error": str(exc)[:300]})
+            except Exception as exc:
+                self._json(503, {"error": f"Could not assess platform comparison: {str(exc)[:200]}"})
+            return
         if path == "/jobs" or re.fullmatch(r"/jobs/[A-Za-z0-9_-]{1,80}/(input|stop)", path):
             try:
                 length = self.headers.get("Content-Length", "")
@@ -156,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found."})
             return
         if not RUN_LOCK.acquire(blocking=False):
-            self._json(409, {"error": "Another Jev run is already active on this device runner."})
+            self._json(409, {"error": "Another Scout run is already active on this device runner."})
             return
         agent = None
         try:
@@ -189,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "max_steps must be between 1 and 100."})
                 return
 
-            adb = os.getenv("ADB_PATH") or "adb"
+            adb = getenv("ADB_PATH") or "adb"
             devices = connected(case.get("platform", "Android"), adb)
             if serial:
                 if serial not in devices:
@@ -209,10 +295,10 @@ class Handler(BaseHTTPRequestHandler):
             with device.screen_recording(output), device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
                 result = agent.run()
             result = agent.finalize_evidence(result)
-            artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json"}))
+            artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json", "sandbox.json"}))
             self._json(200, {"run_id": output.name, "result": result, "artifacts": artifacts})
         except Exception as exc:
-            self._json(500, {"error": f"Jev runner failed: {type(exc).__name__}: {str(exc)[:300]}"})
+            self._json(500, {"error": f"Scout runner failed: {type(exc).__name__}: {str(exc)[:300]}"})
         finally:
             if agent:agent.device.close()
             RUN_LOCK.release()
@@ -221,12 +307,16 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     load_local_env()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Jev local runner listening at http://{HOST}:{PORT}")
+    print(f"{PRODUCT_NAME} local runner listening at http://{HOST}:{PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        from .library_sessions import SESSIONS
+        SESSIONS.stop_active()
+        from .sandbox_recording import MANAGER
+        MANAGER.stop_active()
         server.server_close()
 
 
@@ -243,7 +333,7 @@ def _allowed_origin(origin: str) -> bool:
     if port is not None and 5173 <= port <= 5189:
         return True
     try:
-        configured = urlsplit(os.getenv("JEV_DASHBOARD_URL", ""))
+        configured = urlsplit(getenv("SCOUT_DASHBOARD_URL", ""))
     except ValueError:
         return False
     return bool(configured.netloc and parsed.netloc == configured.netloc and configured.hostname in {"localhost", "127.0.0.1"})

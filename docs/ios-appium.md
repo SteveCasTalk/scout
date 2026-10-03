@@ -1,6 +1,6 @@
 # iOS through Appium
 
-Jev supports iOS cases through XCUITest on macOS. Android still uses UiAutomator2
+Scout supports iOS cases through XCUITest on macOS. Android still uses UiAutomator2
 (or an explicitly selected ADB backend). Cases, checkpoints, starting conditions,
 review and evidence use the existing dashboard workflow.
 
@@ -16,20 +16,20 @@ APPIUM_HOME="$PWD/tooling/appium/.appium" tooling/appium/node_modules/.bin/appiu
 APPIUM_HOME="$PWD/tooling/appium/.appium" tooling/appium/node_modules/.bin/appium driver doctor xcuitest
 ```
 
-Restart a running Appium server after installing a new driver. Jev starts the
+Restart a running Appium server after installing a new driver. Scout starts the
 project's installed server automatically when its default local port is free.
 No drivers are installed automatically during a run.
 
 For a physical device: pair/trust the Mac, enable Developer Mode, unlock it, and
 configure WebDriverAgent signing in `.env`:
 
-- `JEV_IOS_TEAM_ID`: your Apple development team ID.
-- `JEV_IOS_SIGNING_ID`: usually `Apple Development`.
-- `JEV_IOS_WDA_BUNDLE_ID`: a bundle ID provisioned by that team, when needed.
-- `JEV_IOS_USE_PREINSTALLED_WDA=true`: optional, only for an already installed,
+- `SCOUT_IOS_TEAM_ID`: your Apple development team ID.
+- `SCOUT_IOS_SIGNING_ID`: usually `Apple Development`.
+- `SCOUT_IOS_WDA_BUNDLE_ID`: a bundle ID provisioned by that team, when needed.
+- `SCOUT_IOS_USE_PREINSTALLED_WDA=true`: optional, only for an already installed,
   correctly signed WebDriverAgent.
 
-Jev does not choose a team, create certificates, or accept signing agreements.
+Scout does not choose a team, create certificates, or accept signing agreements.
 Refer to the [XCUITest real-device configuration documentation](https://appium.github.io/appium-xcuitest-driver/latest/preparation/real-device-config/).
 
 Boot a simulator yourself if using one. Discovery includes paired connected
@@ -45,7 +45,7 @@ run Android and iOS separately. Relaunch preserves app data and login state.
 CLI example (replace the identifiers with your own):
 
 ```sh
-uv run jev-mobile --case case.json --platform iOS --package com.example.uat --serial IOS_UDID
+uv run scout --case case.json --platform iOS --package com.example.uat --serial IOS_UDID
 ```
 
 MCP tools:

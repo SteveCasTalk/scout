@@ -1,5 +1,6 @@
 """iOS observation and actions through Appium/XCUITest on a local Mac."""
 from __future__ import annotations
+from .config import getenv
 
 import base64
 from contextlib import contextmanager, nullcontext
@@ -88,9 +89,9 @@ class AppiumIOSDevice(AppiumAndroidDevice):
                     'appium:bundleId': self.bundle_id, 'appium:noReset': True, 'appium:fullReset': False,
                     'appium:autoLaunch': False, 'appium:newCommandTimeout': 1800,
                     'appium:printPageSourceOnFindFailure': False, 'appium:showXcodeLog': False}
-            for env, cap in [('JEV_IOS_TEAM_ID', 'xcodeOrgId'), ('JEV_IOS_SIGNING_ID', 'xcodeSigningId'), ('JEV_IOS_WDA_BUNDLE_ID', 'updatedWDABundleId')]:
-                if os.getenv(env):caps['appium:' + cap] = os.environ[env]
-            if os.getenv('JEV_IOS_USE_PREINSTALLED_WDA') == 'true':caps['appium:usePreinstalledWDA'] = True
+            for env, cap in [('SCOUT_IOS_TEAM_ID', 'xcodeOrgId'), ('SCOUT_IOS_SIGNING_ID', 'xcodeSigningId'), ('SCOUT_IOS_WDA_BUNDLE_ID', 'updatedWDABundleId')]:
+                if getenv(env):caps['appium:' + cap] = getenv(env)
+            if getenv('SCOUT_IOS_USE_PREINSTALLED_WDA') == 'true':caps['appium:usePreinstalledWDA'] = True
             started = time.perf_counter()
             try:
                 self._driver = webdriver.Remote(self.server_url, options=XCUITestOptions().load_capabilities(caps))
