@@ -3,19 +3,20 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jev-mobile"
+name = "scout-mobile"
 version = "0.1.0"
-description = "Jev-based Android UI testing with MCP tools"
+description = "Scout mobile testing platform with MCP, Appium, verification, evidence, and sandbox scenarios"
 requires-python = ">=3.11"
 dependencies = ["mcp>=1.9,<2", "Appium-Python-Client>=5,<6"]
 
 [project.optional-dependencies]
 appium = [] # Compatibility with the earlier optional installation command.
+sandbox = ["mitmproxy>=11,<13"]
 
 [project.scripts]
-jev-mobile = "jev_mobile.__main__:main"
-jev-mobile-mcp = "jev_mobile.mcp_server:main"
-jev-mobile-local-runner = "jev_mobile.local_server:main"
+scout = "scout_mobile.__main__:main"
+scout-mcp = "scout_mobile.mcp_server:main"
+scout-local-runner = "scout_mobile.local_server:main"
 
 [tool.setuptools.packages.find]
-include = ["jev_mobile*"]
+include = ["scout_mobile*"]

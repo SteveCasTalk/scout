@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { context, failure, HttpError, jsonBody } from '@/lib/server';
 import { checkpointResult } from '@/lib/contracts';
-const input = z.object({ run_id: z.string().uuid(), checkpoint_id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/), decision: z.enum(['accept', 'dispute']), explanation: z.string().trim().min(1).max(2000) });
+const input = z.object({ workspace_id: z.string().uuid().optional(), run_id: z.string().uuid(), checkpoint_id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/), decision: z.enum(['accept', 'dispute']), explanation: z.string().trim().min(1).max(2000) });
 export async function GET(request: Request) { try {
     const { db, owner } = await context(request);
     const workspace = new URL(request.url).searchParams.get('workspace');
@@ -16,6 +16,7 @@ export async function POST(request: Request) { try {
     const value = input.parse(await jsonBody(request));
     const run = await db.prepare('SELECT workspace_id,trace_json FROM runs WHERE id=? AND owner=?').bind(value.run_id, owner).first<{workspace_id:string;trace_json:string}>();
     if (!run) throw new HttpError(404, 'Run not found.');
+    if (value.workspace_id && run.workspace_id !== value.workspace_id) throw new HttpError(404, 'Run not found in this workspace.');
     const trace: unknown = JSON.parse(run.trace_json);
     if (!Array.isArray(trace)) throw new HttpError(409, 'Run trace is unavailable.');
     const report = [...trace].reverse().find(step => step && typeof step === 'object' && Array.isArray(step.checkpoint_results));

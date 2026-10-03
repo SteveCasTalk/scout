@@ -5,6 +5,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def getenv(name: str, default: str | None = None) -> str | None:
+    """Prefer Scout settings; accept the previous prefix for existing setups."""
+    if name in os.environ:
+        return os.environ[name]
+    legacy = name.replace('SCOUT_', 'JEV_', 1) if name.startswith('SCOUT_') else name
+    return os.environ.get(legacy, default)
+
 def load_local_env(path: Path | None = None) -> None:
     path = path or ROOT / '.env'
     if not path.exists():

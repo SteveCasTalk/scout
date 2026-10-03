@@ -1,0 +1,1 @@
+ALTER TABLE `test_cases` ADD `sandbox_json` text DEFAULT 'null' NOT NULL;

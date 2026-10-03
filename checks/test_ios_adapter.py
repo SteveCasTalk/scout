@@ -6,10 +6,10 @@ import unittest
 from unittest.mock import Mock, patch
 from xml.sax.saxutils import quoteattr
 
-from jev_mobile.ios_device import AppiumIOSDevice
-from jev_mobile.device import DeviceError
-from jev_mobile.agent import Agent, RunConfig
-from jev_mobile.model import choose
+from scout_mobile.ios_device import AppiumIOSDevice
+from scout_mobile.device import DeviceError
+from scout_mobile.agent import Agent, RunConfig
+from scout_mobile.model import choose
 
 
 def node(kind, label='', **extra):
@@ -97,7 +97,7 @@ class IOSAdapterTests(unittest.TestCase):
         def respond(url,key,body):
             captured.append(body)
             return {'answers': {name: {'choice': ('SET_VALUE' if name=='operation' else next(iter(q['criteria']))), 'confidence':1, 'probabilities':{k:int(k==('SET_VALUE' if name=='operation' else next(iter(q['criteria'])))) for k in q['criteria']}} for name,q in body['questions'].items()}}
-        with patch.dict('os.environ',{'TYPESAFE_API_KEY':'fixture'}),patch('jev_mobile.model.post_json',side_effect=respond):
+        with patch.dict('os.environ',{'TYPESAFE_API_KEY':'fixture'}),patch('scout_mobile.model.post_json',side_effect=respond):
             self.assertEqual(choose(d.observe().elements,'Month','Select March',[],platform='iOS')['operation'],'SET_VALUE')
         self.assertNotIn('BACK',captured[0]['questions']['operation']['criteria'])
         self.assertEqual(captured[0]['state']['page']['url'],'ios://device')
@@ -152,7 +152,7 @@ class IOSRunnerTests(unittest.TestCase):
         screen=device(node('TextField','Email'),node('StaticText','Ready')).observe()
         with tempfile.TemporaryDirectory() as directory:
             agent,d=self.agent(directory,screen)
-            with patch('jev_mobile.agent.choose',side_effect=[self.decision('TYPE_TEXT','1'),self.decision('DONE')]):
+            with patch('scout_mobile.agent.choose',side_effect=[self.decision('TYPE_TEXT','1'),self.decision('DONE')]):
                 result=agent.run()
             self.assertEqual(result['status'],'Passed')
             d.type_text.assert_called_once_with(screen.elements[0],'person@example.test')
@@ -163,7 +163,7 @@ class IOSRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             agent,d=self.agent(directory,screen)
             d.has_alert.return_value=True
-            with patch('jev_mobile.agent.choose',return_value=self.decision('TAP','1')):
+            with patch('scout_mobile.agent.choose',return_value=self.decision('TAP','1')):
                 result=agent.run()
             self.assertEqual(result['status'],'Blocked')
             d.tap.assert_not_called()
@@ -173,7 +173,7 @@ class IOSRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             agent,d=self.agent(directory,screen,allow_consent=True)
             d.has_alert.return_value=True
-            with patch('jev_mobile.agent.choose',side_effect=[self.decision('TAP','1'),self.decision('DONE')]):
+            with patch('scout_mobile.agent.choose',side_effect=[self.decision('TAP','1'),self.decision('DONE')]):
                 result=agent.run()
             self.assertEqual(result['status'],'Passed')
             d.tap.assert_called_once_with(screen.elements[0])
@@ -184,7 +184,7 @@ class IOSRunnerTests(unittest.TestCase):
             agent,d=self.agent(directory,screen)
             d.foreground.return_value='com.apple.mobilesafari'
             d.permits_foreground.return_value=False
-            with patch('jev_mobile.agent.choose') as selector:
+            with patch('scout_mobile.agent.choose') as selector:
                 result=agent.run()
             self.assertEqual(result['status'],'Blocked')
             selector.assert_not_called()

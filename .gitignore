@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 runner-output/
+.scout-sandbox/
+# Legacy fixture directory/link retained for historical paths.
+.jev-sandbox/
 __pycache__/
 *.pyc
 *.egg-info/

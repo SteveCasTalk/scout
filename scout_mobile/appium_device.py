@@ -5,6 +5,7 @@ falls back silently to ADB when Appium fails. The shared parser normalizes
 UiAutomator2 XML into the same observed controls as the existing runner.
 """
 from __future__ import annotations
+from .config import getenv
 
 import time
 import os
@@ -24,7 +25,7 @@ class AppiumAndroidDevice(AndroidDevice):
         if url.scheme != 'http' or url.hostname not in {'localhost', '127.0.0.1', '::1'} or url.username or url.password or url.query or url.fragment:
             raise ValueError('The Appium trial requires a local HTTP server URL without credentials.')
         self.server_url = server_url.rstrip('/')
-        configured = os.getenv('JEV_APPIUM_IDLE_TIMEOUT_MS', '')
+        configured = getenv('SCOUT_APPIUM_IDLE_TIMEOUT_MS', '')
         self.idle_timeout_ms = idle_timeout_ms if idle_timeout_ms is not None else int(configured) if configured else 1000
         if self.idle_timeout_ms is not None and (type(self.idle_timeout_ms) is not int or not 0 <= self.idle_timeout_ms <= 10000):
             raise ValueError('Appium idle timeout must be 0–10000 milliseconds.')

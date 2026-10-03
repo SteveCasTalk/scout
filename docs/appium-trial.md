@@ -1,10 +1,10 @@
 # Appium Android setup and measurements
 
 Appium is the default Android backend. The previous ADB execution backend
-remains available through `--driver adb` or `JEV_ANDROID_DRIVER=adb`. Appium handles hierarchy observations, screenshots, app
+remains available through `--driver adb` or `SCOUT_ANDROID_DRIVER=adb`. Appium handles hierarchy observations, screenshots, app
 activation, foreground app lookup, taps, text, swipes, and Back. Android device
 discovery, installation checks, metadata, logs, prompt settings, and recording
-still use ADB. This is the first migration stage; an iOS driver is not implemented.
+still use ADB. iOS uses the shared runner through XCUITest; see [iOS setup and limitations](ios-appium.md). Measurements below describe the original Android trial.
 
 ## Install and start
 
@@ -23,7 +23,7 @@ npm --prefix tooling/appium start
 ```
 
 The manual server command is optional after installation. On the first Appium
-operation, Jev reuses a healthy server or starts the bundled server at
+operation, Scout reuses a healthy server or starts the bundled server at
 127.0.0.1:4723. macOS Android SDK and Java paths are discovered when possible;
 set ANDROID_HOME and JAVA_HOME if installed elsewhere. A custom Appium URL
 must already be running. Startup failures report the local log or setup steps.
@@ -36,11 +36,11 @@ Do not enable debug logging while entering credentials.
 ## Choose a backend
 
 ```sh
-.venv/bin/python -m jev_mobile --driver appium --case /path/to/case.json --package com.example.uat --serial DEVICE_SERIAL
+.venv/bin/python -m scout_mobile --driver appium --case /path/to/case.json --package com.example.uat --serial DEVICE_SERIAL
 ```
 
-Defaults are `JEV_ANDROID_DRIVER=appium` and
-`JEV_APPIUM_URL=http://127.0.0.1:4723`; local `.env` values can override them. Restart the MCP
+Defaults are `SCOUT_ANDROID_DRIVER=appium` and
+`SCOUT_APPIUM_URL=http://127.0.0.1:4723`; local `.env` values can override them. Restart the MCP
 server and dashboard bridge using the virtual environment. All Agent entrypoints
 use that setting. CLI `--driver adb` overrides it. Old processes must be restarted
 to load the new implementation. No dashboard backend selector is added yet.
@@ -73,7 +73,7 @@ batch ordering, or a small sample size limits comparisons. This is not a full
 test-run benchmark. The default idle wait is 1000 ms, based on the emulator and Samsung trial.
 Reducing waits further may change observation reliability.
 For a controlled comparison, `--idle-timeout-ms 1000` sets Appium's idle wait
-to one second. Runs can use the equivalent `JEV_APPIUM_IDLE_TIMEOUT_MS=1000`;
+to one second. Runs can use the equivalent `SCOUT_APPIUM_IDLE_TIMEOUT_MS=1000`;
 leaving that variable unset uses 1000 ms. Set 10000 to try a longer wait. Startup and source
 timings should always be measured separately on a warm session.
 

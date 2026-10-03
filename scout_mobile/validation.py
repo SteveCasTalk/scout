@@ -1,4 +1,4 @@
-"""Input validation shared by Jev MCP entry points and dependency-light tests."""
+"""Input validation shared by Scout MCP entry points and dependency-light tests."""
 from __future__ import annotations
 
 import re

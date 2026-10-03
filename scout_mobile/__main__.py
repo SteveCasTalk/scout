@@ -1,4 +1,4 @@
-"""Run an indexed-action Android test and save a reviewable evidence bundle."""
+"""Run a mobile test and save a reviewable evidence bundle."""
 from __future__ import annotations
 import argparse
 from datetime import datetime
@@ -7,11 +7,12 @@ import os
 from contextlib import nullcontext
 from pathlib import Path
 from .agent import Agent,RunConfig
-from .config import ROOT,load_local_env
+from .config import ROOT,load_local_env,getenv
 from .devices import connected
+from .branding import PRODUCT_NAME
 
 def main()->int:
-    parser=argparse.ArgumentParser(description='Jev mobile test runner')
+    parser=argparse.ArgumentParser(description=f'{PRODUCT_NAME} mobile test runner')
     parser.add_argument('run',nargs='?',default='run',choices=['run'])
     parser.add_argument('--case',type=Path,help='Exported dashboard test-case JSON')
     parser.add_argument('--goal',help='Goal for a one-off test; use --case for repeatable runs')
@@ -21,9 +22,9 @@ def main()->int:
     parser.add_argument('--package',help='Android package ID or iOS bundle ID')
     parser.add_argument('--platform',choices=['Android','iOS'],help='Defaults to the exported case platform or Android')
     parser.add_argument('--serial',help='Required when multiple devices are attached')
-    parser.add_argument('--adb',default=os.getenv('ADB_PATH') or 'adb')
-    parser.add_argument('--driver',choices=['adb','appium'],default='',help='Android execution backend; defaults to JEV_ANDROID_DRIVER or appium')
-    parser.add_argument('--appium-url',default='',help='Local Appium URL; defaults to JEV_APPIUM_URL or http://127.0.0.1:4723')
+    parser.add_argument('--adb',default=getenv('ADB_PATH') or 'adb')
+    parser.add_argument('--driver',choices=['adb','appium'],default='',help='Android execution backend; defaults to SCOUT_ANDROID_DRIVER or appium')
+    parser.add_argument('--appium-url',default='',help='Local Appium URL; defaults to SCOUT_APPIUM_URL or http://127.0.0.1:4723')
     parser.add_argument('--output',type=Path)
     parser.add_argument('--max-steps',type=int,default=40)
     parser.add_argument('--allow-device-prompts',action='store_true',help='Leave Android autofill and credential providers enabled during the run; notification prompts remain suppressed')

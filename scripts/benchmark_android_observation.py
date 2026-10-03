@@ -9,8 +9,8 @@ import statistics
 import time
 from pathlib import Path
 
-from jev_mobile.appium_device import AppiumAndroidDevice
-from jev_mobile.device import AndroidDevice
+from scout_mobile.appium_device import AppiumAndroidDevice
+from scout_mobile.device import AndroidDevice
 
 
 def main():
