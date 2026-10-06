@@ -22,7 +22,7 @@ class VariantChange(Strict):
     index: int = Field(default=0, ge=0, le=19)
     status: int | None = Field(default=None, ge=200, le=599)
     delay_ms: int | None = Field(default=None, ge=0, le=30000)
-    after_ms: int | None = Field(default=None, ge=0, le=60000)
+    after_ms: int | None = Field(default=None, ge=0, le=600000)
     body: str | None = Field(default=None, max_length=64000)
     json_edits: list[JsonEdit] = Field(default_factory=list, max_length=40)
 

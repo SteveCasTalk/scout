@@ -189,3 +189,37 @@ configured test credentials.
 
 The interception API follows [mitmproxy's addon examples](https://docs.mitmproxy.org/stable/addons/examples/).
 Apply `dashboard/drizzle/0012_supreme_major_mapleleaf.sql` before deploying.
+
+## Version 2 request contracts
+
+`get_sandbox_template` keeps the v1 `schema` and adds `schema_v2`. Set
+`schema_version=2` to use exact query/header/JSON-pointer/path predicates, explicit
+whole-segment path templates, correlation, named advancement events, request
+assertions and WebSocket pushes up to 600,000 ms. V1 exact path matching and its
+60,000 ms push limit remain unchanged. Variant drafting supports the v2 ceiling;
+final validation still applies the version's own bound.
+
+V2 matching is deterministic by contract; overlapping matches fail instead of
+choosing arrival order. Repeated query values are ambiguous. `correlation` scopes
+response counters and emitted events by a declared request field. Missing
+correlation blocks a request. `advance_on` selects response position by a named,
+correlated HTTP event; `emit_event` emits it after a fixture reply. WS pushes can
+use `trigger_event`; otherwise their offset starts at connection. Each push has an
+absolute deadline from its origin, independent of other pushes. Teardown cancels
+pending pushes and reports incomplete v2 delivery. Real upstream handshakes and
+text-frame limitations still apply; no WebRTC/audio transport is mocked.
+
+`assertions` on HTTP rules support `equals`, `exists`, `count`, `ordered` synthetic
+identifier arrays and `duplicate` detection (the latter requires uniqueness).
+Only explicitly allowlisted fields are inspected; secret field names are rejected.
+Observed values remain in memory, duplicate history stores bounded digests, and
+persisted evidence contains structural verdicts with field/rule IDs. Network
+capture is bounded at 5,000 events; exhaustion remains inconclusive and further
+fixture processing is blocked. V2 runner-started events carry `clock_source` of
+`run_monotonic`, aligned with execution actions; standalone proxy clocks are labeled
+`proxy_monotonic`. App clocks still require an actual correlation procedure.
+
+These generic schemas do not supply Twomi endpoints, event fields, session keys,
+analytics sources or media capture. Use observed/supplied contracts and synthetic
+fixtures before device acceptance. A fixture hit does not prove payload correctness;
+a successful structural predicate does not prove the app's resulting UI behavior.

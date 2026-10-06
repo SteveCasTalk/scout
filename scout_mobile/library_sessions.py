@@ -13,6 +13,8 @@ from .config import ROOT,getenv
 from .dashboard_client import DashboardClient, sync_run
 from . import dashboard_jobs
 from .devices import connected
+from .execution_contract import check_support, validate_authorizations
+from .capabilities import capabilities, negotiate_case
 
 STORE = ROOT/'runner-output'/'.library-sessions'
 ID = r'^[A-Za-z0-9_-]{1,80}$'
@@ -73,10 +75,17 @@ class Sessions:
             selected=packet.get('cases')
             if not isinstance(selected,list) or not 1<=len(selected)<=100:
                 raise ValueError('Select 1–100 saved cases in execution order.')
-            cases=client.request('/api/library',{'action':'freeze','workspace':packet['workspace_id'],'cases':selected})['cases']
+            cases=client.request('/api/library',{'action':'freeze','workspace':packet['workspace_id'],'cases':selected,'runner_capabilities':capabilities()})['cases']
         platform=cases[0]['platform']
         if any(c['platform']!=platform or not re.fullmatch(r'[A-Za-z0-9_.]{3,240}',c['app_id']) for c in cases):
             raise ValueError('Select one platform and set an app package or bundle ID on every case.')
+        grants=packet.get('authorizations') or {}
+        if not isinstance(grants,dict):raise ValueError('Authorizations must be a per-case-ID mapping.')
+        if set(grants)-{c['id'] for c in cases}:raise ValueError('Authorizations refer to an unselected case.')
+        for c in cases:
+            execution=check_support(c,platform,getenv('SCOUT_ANDROID_DRIVER') or 'appium')
+            negotiate_case(c,execution,packet.get('client_capabilities'))
+            validate_authorizations(grants.get(c['id']),execution)
         serial=packet.get('serial')
         if not isinstance(serial,str) or serial not in connected(platform,getenv('ADB_PATH') or 'adb'):
             raise ValueError('Choose an authorized connected device for this platform. Never guess when several devices are available.')
@@ -86,13 +95,16 @@ class Sessions:
         try:
             matrix=None
             if matrix_id:
-                matrix=client.request('/api/scenario-matrices',{'action':'freeze','workspace_id':packet['workspace_id'],
+                matrix=client.request('/api/scenario-matrices',{'action':'freeze','runner_capabilities':capabilities(),'workspace_id':packet['workspace_id'],
                     'matrix_id':matrix_id,'batch_id':request_id,'request_signature':signature,
                     'expected_revision':packet['expected_matrix_revision'],'expected_case_revision':packet['expected_case_revision'],
                     **({'variant_ids':packet['variant_ids']} if packet.get('variant_ids') is not None else {}),
                     'settings':{'serial':serial,'max_steps':limit,'start_mode':mode,'allow_consent':consent,
                                 'continue_on_failure':packet.get('continue_on_failure',False),'conditions_confirmed':True}})
                 cases=matrix['cases']
+                for c in cases:
+                    execution=check_support(c,platform,getenv('SCOUT_ANDROID_DRIVER') or 'appium')
+                    negotiate_case(c,execution,packet.get('client_capabilities'));validate_authorizations(grants.get(c['id']),execution)
             session={'session_id':session_id,'workspace_id':packet['workspace_id'],'dashboard_url':client.url,
                      'request_id':request_id,'request_signature':signature,'kind':'matrix' if matrix else 'regression',
                      'status':'running','started_at':datetime.now(timezone.utc).isoformat(),'serial':serial,
@@ -100,7 +112,7 @@ class Sessions:
                                               'entry_id':c.get('matrix',{}).get('variant_id',c['id']),
                                               'variant_label':c.get('matrix',{}).get('variant_label','')} for c in cases],
                      'total_cases':len(cases),'current_case_index':0,'active_run_id':None,'outcomes':[],
-                     'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,
+                     'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,'authorizations':grants,
                      'continue_on_failure':packet.get('continue_on_failure',False) if matrix else False,
                      'skipped_case_ids':[],'skipped_entry_ids':[],'_stop':threading.Event(),'_client':client}
             if matrix:session.update(matrix_id=matrix_id,matrix_revision=matrix['matrix_revision'],matrix_name=matrix['matrix_name'])
@@ -128,7 +140,7 @@ class Sessions:
                         break
                     run_id=dashboard_jobs.start({'case':case,'serial':session['serial'],'start_mode':mode,
                                                 'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,
-                                                'retain_saved_case':True},threading.Lock())
+                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium'),'authorizations':session.get('authorizations',{}).get(case['id'])},threading.Lock())
                     session.update(current_case_index=index,active_run_id=run_id)
                     self.persist(session)
                 self.publish_matrix(session,client)

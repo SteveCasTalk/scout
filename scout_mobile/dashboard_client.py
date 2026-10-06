@@ -112,7 +112,8 @@ def sync_run(client: DashboardClient, run_id: str, workspace_id: str) -> dict:
     existing={e['name'] for e in evidence}
     uploaded,failed=[],[]
     for file in sorted(folder.iterdir()):
-        if not file.is_file() or not (file.name in {'result.json','trace.json','jev-output.json','run-verification.json','sandbox.json'} or re.fullmatch(r'\d{3}\.png|screen-recording-\d+\.mp4',file.name)):
+        from .evidence import allowed
+        if not allowed(folder,file.name):
             continue
         if file.name in existing:
             continue

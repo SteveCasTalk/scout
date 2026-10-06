@@ -1,6 +1,7 @@
 """Safety checks for Jev selection and credential handling, using a real observed app state."""
 import json
 import os
+import shlex
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,7 +30,7 @@ class RunnerSafetyTests(unittest.TestCase):
    elif args[1:3]==('settings','get'):
     data=current.get(args[4],'null')+'\n'
    elif args[1:3]==('settings','put'):
-    current[args[4]]='' if args[5]=="''" else args[5]
+    current[args[4]]=shlex.split(args[5])[0]
     data=''
    elif args[1:3]==('settings','delete'):
     current.pop(args[4],None)

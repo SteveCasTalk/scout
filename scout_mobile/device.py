@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import re
+import shlex
 import uuid
 import subprocess
 import time
@@ -109,8 +110,11 @@ class AndroidDevice:
                 try:
                     current=self.command('shell','settings','get','secure',key).stdout.decode(errors='replace').strip()
                     if current:continue # Do not overwrite a setting changed during the run.
-                    if key in original:self.command('shell','settings','put','secure',key,original[key])
+                    if key in original:self.command('shell','settings','put','secure',key,shlex.quote(original[key]))
                     else:self.command('shell','settings','delete','secure',key)
+                    restored=self.command('shell','settings','get','secure',key).stdout.decode(errors='replace').strip()
+                    if restored != original.get(key,'null'):
+                        raise DeviceError(f'Android {key} restoration could not be verified.')
                 except (DeviceError,subprocess.TimeoutExpired) as exc:
                     errors.append(f'{key}: {exc}')
             if errors:raise DeviceError('Could not restore Android credential settings: '+', '.join(errors))
@@ -346,6 +350,9 @@ class AndroidDevice:
 
     def swipe_coordinates(self,x1:int,y1:int,x2:int,y2:int,duration_ms:int) -> None:
         self.command('shell','input','swipe',str(x1),str(y1),str(x2),str(y2),str(duration_ms))
+
+    def drag_coordinates(self,x1:int,y1:int,x2:int,y2:int,duration_ms:int,hold_ms:int) -> None:
+        raise DeviceError('Explicit drag hold requires the Appium adapter; no ADB fallback was attempted.')
 
     def swipe_scrollable_next_item(self,width:int,height:int,screen:Screen|None=None) -> dict:
         """Swipe through the largest accessible content viewport when available."""

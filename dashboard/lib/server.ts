@@ -1,9 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { ZodError } from 'zod';
-export class HttpError extends Error {
-    constructor(public status: number, message: string) { super(message); }
-}
+import { HttpError } from './errors';
+export { HttpError } from './errors';
 export async function context(request: Request, write = false) {
     if (write && request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin)
         throw new HttpError(403, 'Cross-origin requests are not allowed.');

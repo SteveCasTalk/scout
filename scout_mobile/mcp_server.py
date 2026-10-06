@@ -1,6 +1,7 @@
 """MCP tools for Scout's mobile testing platform."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
 import base64
 import json
@@ -31,12 +32,15 @@ from .validation import validate_prompt_steps
 from .checkpoints import validate_checkpoints
 from .starting_conditions import validate_starting_conditions
 from .branding import PRODUCT_NAME
+from .execution_contract import decode_export, validate_execution
+from .capabilities import capabilities, diagnose
 
 
 mcp = FastMCP(PRODUCT_NAME)
 DEFAULT_PACKAGE = "com.wallet.walkthedog.uat"
 CASE_FIELDS = ("id", "revision", "goal", "steps", "expected")
-EVIDENCE_FILES = {"result.json", "trace.json", "jev-output.json", "run-verification.json", "sandbox.json"}
+from .evidence import inventory as evidence_inventory, allowed as evidence_allowed
+EVIDENCE_FILES = {"result.json", "trace.json", "jev-output.json", "run-verification.json", "sandbox.json", "execution-evidence.json"}
 PENDING_MCP_RUNS: dict[str, dict[str, Any]] = {}
 PENDING_MCP_RUNS_LOCK = RLock()
 PENDING_MCP_RUN_TTL = 20 * 60
@@ -52,17 +56,23 @@ def _expire_pending_runs() -> None:
                 run["agent"]._continuation.close()
             except (AttributeError, RuntimeError):
                 pass
+            finally:run['agent'].lease.release()
 
 
 def _drive_mcp_agent(agent: Agent, text: str | None = None) -> dict[str, Any]:
     device = agent.device
     try:
-        with device.screen_recording(agent.output), device.suppress_credential_prompts(), device.suppress_notification_prompt(agent.config.package):
+        agent.lease.acquire()
+        agent.lease_managed=True
+        with device.screen_recording(agent.output), device.suppress_credential_prompts(), (nullcontext() if agent.execution and agent.execution['lifecycle']['notification_policy']=='preserve' else device.suppress_notification_prompt(agent.config.package)):
             result = agent.run() if text is None else agent.resume_text(text)
-        return agent.finalize_evidence(result)
+        result=agent.finalize_evidence(result)
+        if result.get("status")!="awaiting_input":agent.lease.release()
+        return result
     except BaseException:
         if agent._continuation is not None:agent._continuation.close()
-        device.close()
+        try:device.close()
+        finally:agent.lease.release()
         raise
 
 
@@ -143,10 +153,7 @@ def _run_directory(run_id: str) -> Path:
 
 
 def _evidence_files(directory: Path) -> list[Path]:
-    return sorted(
-        (path for path in directory.iterdir() if path.is_file() and (path.name in EVIDENCE_FILES or re.fullmatch(r"\d{3}\.png", path.name) or re.fullmatch(r"screen-recording-\d+\.mp4", path.name))),
-        key=lambda path: path.name,
-    )
+    return evidence_inventory(directory)
 
 
 def _read_run_json(directory: Path, filename: str, fallback: Any) -> Any:
@@ -203,6 +210,7 @@ def run_mobile_test(
     serial: str | None = None,
     max_steps: int = 40,
     adb: str | None = None,
+    authorizations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run an exported Android or iOS test with Jev and verify expected visible text. If ordinary text is needed, call `enter_text` with the returned run_id and a user-authorized value.
 
@@ -215,7 +223,7 @@ def run_mobile_test(
     if path.suffix.lower() != ".json" or not path.is_file():
         raise ValueError("case_file must point to an exported dashboard test-case JSON file.")
     try:
-        case = json.loads(path.read_text(encoding="utf-8"))
+        case = decode_export(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Could not read the test case JSON: {exc}") from exc
     if not isinstance(case, dict) or any(key not in case for key in CASE_FIELDS):
@@ -239,6 +247,7 @@ def run_mobile_test(
             package=package,
             serial=device_serial,
             test_case=case,
+            authorizations=authorizations,
             output=output,
             adb=adb_path,
             max_steps=max_steps,
@@ -275,6 +284,7 @@ def get_test_case_template() -> dict[str, Any]:
     """Read before authoring a test. Canonical MCP input template and verification contract."""
     return {
         "version": 1,
+        "execution_contract": {"version": 2, "optional_field": "execution", "schema": __import__('scout_mobile.execution_contract',fromlist=['Execution']).Execution.model_json_schema(), "authorization": "Run-level authorizations are separate from saved definitions. Purchase entry only; never confirm checkout."},
         "rules": [
             "Explore the application before writing navigation steps; do not invent screens or selectors.",
             "Map each acceptance criterion to an observable checkpoint; max 12 unique IDs, at least one required.",
@@ -329,6 +339,8 @@ def run_mobile_test_from_prompt(
     ticket_key: str = "",
     platform: str = "Android",
     sandbox: dict[str, Any] | None = None,
+    execution: dict[str, Any] | None = None,
+    authorizations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run an Android or iOS test from the user's prompt. If Scout needs ordinary text, this returns `awaiting_input`; the assistant must choose only text requested by the user and call `enter_text` with the returned run_id.
 
@@ -346,6 +358,7 @@ def run_mobile_test_from_prompt(
     authorizes accepting the app's terms/privacy consent for this specific run.
     """
     if platform not in {'Android','iOS'}:raise ValueError('Platform must be Android or iOS.')
+    execution = validate_execution(execution)
     load_local_env()
     goal, steps, expected = goal.strip(), steps.strip(), expected.strip()
     title = title.strip()
@@ -407,6 +420,7 @@ def run_mobile_test_from_prompt(
         "checkpoints": checkpoints,
         "starting_conditions": starting_conditions,
         "sandbox": sandbox,
+        "execution": execution,
         "suite": suite.strip(), "preconditions": preconditions, "ticket_key": ticket_key.strip().upper(),
     }
     output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -415,6 +429,7 @@ def run_mobile_test_from_prompt(
             package=package,
             serial=device_serial,
             test_case=case,
+            authorizations=authorizations,
             output=output,
             adb=adb_path,
             max_steps=max_steps,
@@ -440,9 +455,9 @@ def get_sandbox_template() -> dict[str, Any]:
     a run Inconclusive, even when UI checkpoints pass. WS requires an upstream
     handshake; text frames only. Use synthetic fixtures, never production secrets.
     """
-    from .sandbox import Scenario
+    from .sandbox import Scenario,ScenarioV2
     from .sandbox_variants import VariantChange
-    return {"schema": Scenario.model_json_schema(), "variant_change_schema": VariantChange.model_json_schema(), "example": {
+    return {"schema": Scenario.model_json_schema(), "schema_v2":ScenarioV2.model_json_schema(), "contract_versions":[1,2], "variant_change_schema": VariantChange.model_json_schema(), "example": {
         "id": "empty_feed", "name": "Empty feed", "project": "Example UAT",
         "hosts": ["api.example.test"], "unmatched": "block",
         "http": [{"id": "feed", "host": "api.example.test", "path": "/feed", "method": "GET",
@@ -545,6 +560,60 @@ _LIBRARY_CLIENTS: dict[str, Any] = {}
 _LIBRARY_CLIENT_LOCK = RLock()
 
 
+@mcp.tool()
+def get_runner_capabilities(platform: Literal['Android','iOS'] = 'Android', backend: Literal['appium','adb'] = 'appium') -> dict[str, Any]:
+    """Read this loaded MCP runner's build and supported opt-in contracts. Does not operate a device."""
+    return capabilities(platform, backend)
+
+
+@mcp.tool()
+def diagnose_environment(serial: str | None = None, package: str | None = None, workspace_id: str | None = None) -> dict[str, Any]:
+    """Read-only readiness. Credentials are presence-only; proxy routing/CA and feature readiness are not inferred. No app launch, reset or service startup."""
+    load_local_env()
+    return diagnose(serial, package, workspace_id)
+
+
+@mcp.tool()
+def reconcile_device_cleanup(run_id: str, serial: str) -> dict[str, Any]:
+    """Restore validated reversible settings recorded by a previous failed lifecycle cleanup on the explicitly selected idle device. Does not clear app data or rerun a test."""
+    from .lifecycle import reconcile
+    load_local_env()
+    return reconcile(run_id,serial)
+
+
+def _author_cases(workspace_id, items, dry_run=False):
+    uuid.UUID(workspace_id)
+    if not isinstance(items,list) or not 1 <= len(items) <= 100:
+        raise ValueError('Provide 1–100 definitions with per-item request UUIDs.')
+    return _library_dashboard().request('/api/case-authoring', {'workspace_id':workspace_id,'items':items,'dry_run':dry_run,'runner_capabilities':capabilities()})
+
+
+@mcp.tool()
+def validate_test_cases(workspace_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Dry-run saved-case authoring against the owned workspace. Items: request_id, case, optional id/expected_revision. No writes or execution."""
+    return _author_cases(workspace_id,items,True)
+
+
+@mcp.tool()
+def create_test_case(workspace_id: str, definition: dict[str, Any], request_id: str) -> dict[str, Any]:
+    """Create a saved case without executing. Supply a UUID request_id; identical retries reuse the result and changed payloads conflict."""
+    uuid.UUID(request_id)
+    return _author_cases(workspace_id,[{'request_id':request_id,'case':definition}])
+
+
+@mcp.tool()
+def update_test_case(workspace_id: str, case_id: str, expected_revision: int, definition: dict[str, Any], request_id: str) -> dict[str, Any]:
+    """Save a reviewed complete definition with optimistic revision checking and request-ID idempotency. Never executes it."""
+    uuid.UUID(case_id);uuid.UUID(request_id)
+    return _author_cases(workspace_id,[{'request_id':request_id,'id':case_id,'expected_revision':expected_revision,'case':definition}])
+
+
+@mcp.tool()
+def import_test_cases(workspace_id: str, items: list[dict[str, Any]], dry_run: bool = True) -> dict[str, Any]:
+    """Validate or save up to 100 items independently. Each has request_id/case, plus id/expected_revision for updates. Per-item errors and partial success are explicit; no execution side effect."""
+    return _author_cases(workspace_id,items,dry_run)
+
+
 def _library_dashboard():
     from .dashboard_client import DashboardClient
     load_local_env()
@@ -558,6 +627,7 @@ def _library_dashboard():
 def _start_library_session(packet: dict, request_id: str | None):
     request_id=str(uuid.UUID(request_id)) if request_id else str(uuid.uuid4())
     packet['request_id']=request_id
+    packet['client_capabilities']=capabilities()
     try:
         return _bridge_request('/library-sessions',packet)
     except ValueError as exc:
@@ -713,7 +783,8 @@ def run_scenario_matrix(workspace_id: str, matrix_id: str, serial: str,
                          expected_matrix_revision: int, expected_case_revision: int,
                          conditions_confirmed: bool = False, variant_ids: list[str] | None = None,
                          continue_on_failure: bool = False, max_steps: int = 40,
-                         allow_consent: bool = False, request_id: str | None = None) -> dict[str, Any]:
+                         allow_consent: bool = False, request_id: str | None = None,
+                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
     """Start an owned saved matrix asynchronously on an explicitly selected
     device. Review base/matrix revisions and ALL variant checkpoints first;
     prepare proxy routing/CA and starting conditions safe between variants.
@@ -731,7 +802,7 @@ def run_scenario_matrix(workspace_id: str, matrix_id: str, serial: str,
     return _start_library_session({'dashboard_url':client.url,'workspace_id':workspace_id,'matrix_id':matrix_id,
         'serial':serial,'expected_matrix_revision':expected_matrix_revision,'expected_case_revision':expected_case_revision,
         'conditions_confirmed':conditions_confirmed,'variant_ids':variant_ids,'continue_on_failure':continue_on_failure,
-        'start_mode':'relaunch','max_steps':max_steps,'allow_consent':allow_consent},request_id)
+        'start_mode':'relaunch','max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
 
 
 @mcp.tool()
@@ -858,7 +929,8 @@ def add_review_note(workspace_id: str, target_type: Literal['case', 'run'], targ
 def run_test_case(workspace_id: str, case_id: str, serial: str,
                    conditions_confirmed: bool = False, expected_revision: int | None = None,
                    start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
-                   allow_consent: bool = False, request_id: str | None = None) -> dict[str, Any]:
+                   allow_consent: bool = False, request_id: str | None = None,
+                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
     """Start a saved case asynchronously on an explicitly selected device.
     Read its definition and prerequisites first; confirm preparation, never invent
     evidence that conditions are met. Device preflight can still return Blocked.
@@ -878,7 +950,7 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':case['id'],'revision':case['revision']}],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
 
 
 @mcp.tool()
@@ -886,7 +958,8 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
                     platform: Literal['Android','iOS'], serial: str,
                     conditions_confirmed: bool = False, case_ids: list[str] | None = None,
                     start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
-                    allow_consent: bool = False, request_id: str | None = None) -> dict[str, Any]:
+                    allow_consent: bool = False, request_id: str | None = None,
+                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
     """Start a sequential regression of up to 100 saved cases from one suite.
     Read definitions and confirm prerequisites, including that later cases can
     follow earlier ones. Optional case_ids selects a subset in that exact order;
@@ -928,7 +1001,7 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':c['id'],'revision':c['revision']} for c in chosen],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
 
 
 @mcp.tool()
@@ -1199,9 +1272,9 @@ def list_run_evidence(run_id: str) -> dict[str, Any]:
 @mcp.tool()
 def get_run_evidence(run_id: str, filename: str) -> dict[str, Any]:
     """Export one allowlisted run evidence file as base64 with its filename and media type."""
-    if filename not in EVIDENCE_FILES and not re.fullmatch(r"\d{3}\.png", filename):
-        raise ValueError("Unsupported evidence filename.")
     directory = _run_directory(run_id)
+    if not evidence_allowed(directory,filename):
+        raise ValueError("Unsupported evidence filename.")
     path = (directory / filename).resolve()
     if path.parent != directory or not path.is_file():
         raise ValueError("Evidence file not found.")
@@ -1268,9 +1341,9 @@ def list_ios_devices() -> dict[str, Any]:
 
 
 @mcp.tool()
-def run_android_test(case_file: str, package: str | None = None, serial: str | None = None, max_steps: int = 40, adb: str | None = None) -> dict[str, Any]:
+def run_android_test(case_file: str, package: str | None = None, serial: str | None = None, max_steps: int = 40, adb: str | None = None, authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compatibility entry point. Prefer run_mobile_test for platform-aware exported cases."""
-    return run_mobile_test(case_file, package, serial, max_steps, adb)
+    return run_mobile_test(case_file, package, serial, max_steps, adb, authorizations=authorizations)
 
 run_android_test_from_prompt = run_mobile_test_from_prompt
 mcp.add_tool(run_mobile_test_from_prompt, name="run_android_test_from_prompt", description="Compatibility name for run_mobile_test_from_prompt; defaults to Android.")

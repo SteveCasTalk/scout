@@ -1,4 +1,5 @@
 'use client';
+import { capableClient, runGrants, requireCaseCapabilities } from '@/lib/execution-contract';
 import { readStoredItem } from '@/lib/browser-storage';
 import { useEffect, useRef, useState } from 'react';
 import { Play, RefreshCw, Square } from 'lucide-react';
@@ -9,7 +10,7 @@ import { StartingConditionsReport } from './starting-conditions';
 import type { CheckpointResult, StartingConditionResult, TestCase } from '@/lib/contracts';
 const BRIDGE = 'http://127.0.0.1:8765';
 type Job = { starting_condition_results?: StartingConditionResult[]; checkpoint_results?: CheckpointResult[]; run_id: string; status: string; steps: { step: number; operation: string; label?: string; screenshot?: string; elapsed_ms?: number }[]; text_request?: { field: { label: string }; instruction: string }; result?: Record<string, unknown>; artifacts?: string[]; error?: string };
-type Session = { cases: TestCase[]; index: number; serial: string; mode: string; limit: number; allowConsent?: boolean; jobId: string; outcomes: string[] };
+type Session = { cases: TestCase[]; index: number; serial: string; mode: string; limit: number; allowConsent?: boolean; allowPurchase?: boolean; allowClear?: boolean; jobId: string; outcomes: string[] };
 async function bridge<T = Record<string, unknown>>(path: string, body?: unknown) {
     const response = await fetch(BRIDGE + path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await response.json() as T & { error?: string };
@@ -18,6 +19,7 @@ async function bridge<T = Record<string, unknown>>(path: string, body?: unknown)
 }
 export function RunSession({ requested, onClose, onComplete, onBusy }: { requested: TestCase[] | null; onClose: () => void; onComplete: (job: Job) => Promise<void>; onBusy: (id: string | null) => void }) {
     const [allowConsent, setAllowConsent] = useState(false);
+    const [allowPurchase,setAllowPurchase]=useState(false),[allowClear,setAllowClear]=useState(false);
     const [ordered, setOrdered] = useState<TestCase[]>([]);
     const [devices, setDevices] = useState<string[]>([]), [serial, setSerial] = useState(''), [mode, setMode] = useState('current'), [limit, setLimit] = useState(40), [confirmed, setConfirmed] = useState(false);
     const [session, setSession] = useState<Session | null>(null), [job, setJob] = useState<Job | null>(null), [error, setError] = useState(''), [pending, setPending] = useState(false), [text, setText] = useState(''), [stopping, setStopping] = useState(false);
@@ -26,16 +28,17 @@ export function RunSession({ requested, onClose, onComplete, onBusy }: { request
     useEffect(() => { try { const saved = readStoredItem(sessionStorage, 'scout-run-session'); if (saved) setSession(JSON.parse(saved)); } catch { sessionStorage.removeItem('scout-run-session'); } }, []);
     useEffect(() => { if (session) sessionStorage.setItem('scout-run-session', JSON.stringify(session)); else sessionStorage.removeItem('scout-run-session'); busy.current(session?.cases[session.index]?.id || null); }, [session]);
     async function refreshDevices() { setError(''); try { const data = await bridge<{ devices: string[] }>('/devices?platform=' + encodeURIComponent(requested?.[0]?.platform || 'Android')); setDevices(data.devices || []); setSerial(''); } catch (e) { setError((e as Error).message); } }
-    useEffect(() => { if (requested) { setOrdered(requested); setConfirmed(false); setAllowConsent(false); setError(''); void refreshDevices(); } }, [requested]);
+    useEffect(() => { if (requested) { setOrdered(requested); setConfirmed(false); setAllowConsent(false); setAllowPurchase(false); setAllowClear(false); setError(''); void refreshDevices(); } }, [requested]);
     async function launch(next: Session) {
         const test = next.cases[next.index];
-        const data = await bridge<{ run_id: string }>('/jobs', { case: test, serial: next.serial, start_mode: next.mode, max_steps: next.limit, allow_consent: next.allowConsent === true, conditions_confirmed: true });
+        if(test.execution||test.sandbox?.schema_version===2){const health=await bridge<{capabilities?:unknown}>('/health');requireCaseCapabilities(test,health.capabilities);}
+        const data = await bridge<{ run_id: string }>('/jobs', { client_capabilities:capableClient, authorizations:runGrants(test.execution,next.allowPurchase===true,next.allowClear===true), case: test, serial: next.serial, start_mode: next.mode, max_steps: next.limit, allow_consent: next.allowConsent === true, conditions_confirmed: true });
         setJob(null); setText(''); setSession({ ...next, jobId: data.run_id });
     }
     async function start() {
         if (!requested?.length || !serial || !confirmed || pending || session) return;
         setPending(true); setError(''); setStopping(false);
-        try { await launch({ cases: ordered, index: 0, serial, mode, limit, allowConsent, jobId: '', outcomes: [] }); onClose(); } catch (e) { setError((e as Error).message); } finally { setPending(false); }
+        try { await launch({ cases: ordered, index: 0, serial, mode, limit, allowConsent, allowPurchase, allowClear, jobId: '', outcomes: [] }); onClose(); } catch (e) { setError((e as Error).message); } finally { setPending(false); }
     }
     useEffect(() => {
         if (!session?.jobId) return;
@@ -75,6 +78,8 @@ export function RunSession({ requested, onClose, onComplete, onBusy }: { request
             <label>Maximum actions per case<input type="number" min={1} max={100} value={limit} onChange={e => setLimit(Number(e.target.value))}/></label>
             <ol className="setup-cases">{ordered.map((test, index) => <li key={test.id}><b>{test.title}</b><p>{test.preconditions || 'No additional setup notes.'}</p><p className="setup-verified-conditions">{[test.starting_conditions?.app_version && `Version ${test.starting_conditions.app_version}`, test.starting_conditions && test.starting_conditions.login_state !== 'any' && `Login: ${test.starting_conditions.login_state.replaceAll('_',' ')}`, test.starting_conditions?.account && `Account: ${test.starting_conditions.account}`, ...(test.starting_conditions?.required_data || []).map(value => `Visible data: ${value}`)].filter(Boolean).join(' · ') || 'No automated checks configured.'}</p><small>{test.app_id || 'App package or bundle ID missing'}</small>{test.sandbox && <p>Sandbox: {test.sandbox.name} · Proxy routing and test CA trust must be prepared. Required mock hits will be checked.</p>}{ordered.length > 1 && <div className="row-actions"><Button size="sm" variant="ghost" disabled={index === 0} onClick={() => { setOrdered(old => { const next = [...old]; [next[index-1], next[index]] = [next[index], next[index-1]]; return next; }); setConfirmed(false); }}>Move up</Button><Button size="sm" variant="ghost" disabled={index === ordered.length-1} onClick={() => { setOrdered(old => { const next = [...old]; [next[index+1], next[index]] = [next[index], next[index+1]]; return next; }); setConfirmed(false); }}>Move down</Button></div>}</li>)}</ol>
             <label className="setup-confirm"><input type="checkbox" checked={allowConsent} onChange={e => setAllowConsent(e.target.checked)}/>Allow Scout to accept permission and Terms/Privacy prompts required by these cases.</label>
+            {ordered.some(t=>t.execution?.purchase_entries.length) && <label className="setup-confirm"><input type="checkbox" checked={allowPurchase} onChange={e=>setAllowPurchase(e.target.checked)}/>Allow the listed purchase-entry CTAs once per case. Checkout confirmation stays blocked.</label>}
+            {ordered.some(t=>t.execution?.lifecycle.before.some(h=>h.operation==='clear_data')) && <label className="setup-confirm"><input type="checkbox" checked={allowClear} onChange={e=>setAllowClear(e.target.checked)}/>Allow the declared app data resets. These delete local app data.</label>}
             <label className="setup-confirm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>I have prepared the listed starting conditions. Later cases can safely follow earlier ones.</label>
             {invalid && <p className="form-error">Select cases from one platform and set an app package or bundle ID on each case. Run Android and iOS suites separately.</p>}{error && <p role="alert" className="form-error">{error}</p>}
             <Button onClick={() => void start()} disabled={pending || !!session || !confirmed || !serial || invalid || !Number.isInteger(limit) || limit < 1 || limit > 100}><Play size={15}/>{pending ? 'Starting…' : 'Start run'}</Button></div>

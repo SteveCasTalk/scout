@@ -1,12 +1,16 @@
 """Background dashboard runs. Only guarded agent captures are exposed as progress."""
 from __future__ import annotations
+from contextlib import nullcontext
 from datetime import datetime
 import os
 import threading
 import time
 from .agent import Agent, RunConfig
+from .evidence import inventory as evidence_inventory
 from .config import ROOT,getenv
 from .devices import connected
+from .execution_contract import check_support, validate_authorizations
+from .capabilities import capabilities, negotiate_case
 
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
@@ -22,7 +26,7 @@ def snapshot(job_id: str) -> dict | None:
             import json
             try:
                 result = json.loads(path.read_text(encoding='utf-8'))
-                return {'run_id': job_id, 'status': 'completed', 'steps': [], 'result': result, 'artifacts': [p.name for p in path.parent.iterdir() if p.is_file() and (p.suffix in {'.png', '.mp4'} or p.name in {'trace.json', 'jev-output.json', 'sandbox.json'})]}
+                return {'run_id': job_id, 'status': 'completed', 'steps': [], 'result': result, 'artifacts': [p.name for p in evidence_inventory(path.parent)]}
             except (OSError, ValueError):
                 return None
         return {key: value for key, value in job.items() if not key.startswith('_')}
@@ -53,6 +57,9 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
         raise ValueError('Set a valid app package or bundle ID on the case.')
     if case.get('platform') not in {'Android', 'iOS'}:
         raise ValueError('Select Android or iOS on the case.')
+    execution=check_support(case,case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium')
+    negotiate_case(case,execution,payload.get('client_capabilities'))
+    grants=validate_authorizations(payload.get('authorizations'),execution)
     serial = payload.get('serial')
     adb = getenv('ADB_PATH') or 'adb'
     if not isinstance(serial, str) or serial not in connected(case['platform'], adb):
@@ -99,11 +106,13 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
                     JOBS[job_id]['checkpoint_results'] = list(agent.checkpoint_verdicts.values()) if agent else []
                     JOBS[job_id]['starting_condition_results'] = list(agent.starting_condition_results) if agent else []
             job = JOBS[job_id]
-            agent = Agent(RunConfig(package, serial, case, output, adb, steps, 600, str(case.get('assertion_text', '')), allow_consent=allow_consent, mcp_host_text=True, on_progress=progress, should_stop=job['_stop'].is_set))
+            agent = Agent(RunConfig(package, serial, case, output, adb, steps, 600, str(case.get('assertion_text', '')), allow_consent=allow_consent, mcp_host_text=True, on_progress=progress, should_stop=job['_stop'].is_set,authorizations=grants))
+            agent.lease.acquire()
+            agent.lease_managed=True
             if mode == 'relaunch':
                 agent.device.terminate(package)
             while True:
-                with agent.device.screen_recording(output), agent.device.suppress_credential_prompts(), agent.device.suppress_notification_prompt(package):
+                with agent.device.screen_recording(output), agent.device.suppress_credential_prompts(), (nullcontext() if agent.execution and agent.execution['lifecycle']['notification_policy']=='preserve' else agent.device.suppress_notification_prompt(package)):
                     result = agent.run() if agent._continuation is None else agent.resume_text(job['_text'])
                 result = agent.finalize_evidence(result)
                 with LOCK:
@@ -117,12 +126,13 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
                 if not job['_stop'].is_set():
                     job['_wake'].wait(900)
                 if job['_stop'].is_set() or job['_text'] is None:
-                    result = agent.write_result('Inconclusive', 'Run stopped while waiting for user input.', None)
+                    if agent._continuation is not None:agent._continuation.close()
+                    result = agent.finalize_evidence(agent.write_result('Inconclusive', 'Run stopped while waiting for user input.', None))
                     break
                 with LOCK:
                     job['text_request'] = None
             progress(agent.history)
-            artifacts = sorted(p.name for p in output.iterdir() if p.is_file() and (p.suffix in {'.png', '.mp4'} or p.name in {'trace.json', 'result.json', 'jev-output.json', 'sandbox.json'}))
+            artifacts = [p.name for p in evidence_inventory(output)]
             with LOCK:
                 job.update(status='completed', result=result, artifacts=artifacts, text_request=None)
         except Exception as exc:
@@ -133,7 +143,8 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
             try:
                 if agent:
                     if agent._continuation is not None:agent._continuation.close()
-                    agent.device.close()
+                    try:agent.device.close()
+                    finally:agent.lease.release()
             except Exception:
                 with LOCK:
                     JOBS[job_id]['cleanup_error']='Device session cleanup failed. Check the device before running again.'

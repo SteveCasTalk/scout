@@ -1,3 +1,4 @@
+import { requireCaseCapabilities } from '@/lib/execution-contract';
 import { z } from 'zod';
 import { context, failure, HttpError, jsonBody } from '@/lib/server';
 import { decodeCase, caseSnapshotInput, retainRevision } from '@/lib/case-record';
@@ -83,7 +84,7 @@ export async function GET(request:Request) { try {
     return Response.json(page(rows.results,p.limit,'updated'));
 } catch(error){return failure(error);} }
 
-const freezeInput=z.object({action:z.literal('freeze'),workspace:z.string().uuid(),cases:z.array(z.object({id:z.string().uuid(),revision:z.number().int().positive()})).min(1).max(100)});
+const freezeInput=z.object({action:z.literal('freeze'),workspace:z.string().uuid(),runner_capabilities:z.unknown().optional(),cases:z.array(z.object({id:z.string().uuid(),revision:z.number().int().positive()})).min(1).max(100)});
 const saveInput=z.object({action:z.literal('save_run'),workspace:z.string().uuid(),run:runInput.extend({externalRunId:z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),matrix:matrixReference.optional()})});
 export async function POST(request:Request) {try {
     const {db,owner}=await context(request,true),packet=z.discriminatedUnion('action',[freezeInput,saveInput]).parse(await jsonBody(request));
@@ -93,7 +94,7 @@ export async function POST(request:Request) {try {
         for(const selected of packet.cases){
             const row=await db.prepare('SELECT * FROM test_cases WHERE owner=? AND workspace_id=? AND id=? AND revision=?').bind(owner,packet.workspace,selected.id,selected.revision).first();
             if(!row)throw new HttpError(409,'A case changed or is outside this workspace. Reload before running.');
-            cases.push(decodeCase(row));
+            const decoded=decodeCase(row);requireCaseCapabilities(decoded,packet.runner_capabilities);cases.push(decoded);
         }
         await db.batch(cases.map(c=>retainRevision(db,owner,c)));
         // Confirm every requested version has an authoritative retained definition.

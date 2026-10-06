@@ -4,6 +4,7 @@ import { caseInput, type TestCase } from './contracts';
 export const caseSnapshotInput = caseInput.extend({ id: z.string().uuid(), revision: z.number().int().positive(), updated: z.string() });
 export function decodeCase(row: Record<string, unknown>): TestCase {
     return caseSnapshotInput.parse({ ...row,
+        execution: JSON.parse(String(row.execution_json || 'null')),
         sandbox: JSON.parse(String(row.sandbox_json || 'null')),
         checkpoints: JSON.parse(String(row.checkpoints_json || '[]')),
         starting_conditions: JSON.parse(String(row.starting_conditions_json || '{}')),

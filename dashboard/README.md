@@ -44,6 +44,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_supreme_major_mapleleaf.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_melodic_orphan.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_luxuriant_lucky_pierre.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0015_eminent_prodigy.sql
 npm run dev
 ```
 
@@ -202,3 +203,5 @@ Historical batches retain their case/matrix revisions. Matrix runs appear in the
 ordinary case history with their scenario label; they never duplicate the case.
 MCP can list/save/read/run matrices, rerun a selected subset and inspect reports;
 see [the matrix tool workflow](../docs/mcp.md#scenario-matrices).
+
+Contract v2 adds optional execution definitions and idempotent case-authoring receipts. Apply migration 0015 once after the prior migrations. Reload the dashboard, MCP and bridge together before running v2 cases; keep server compatibility gates during rollback. Host-only contract/migration checks: `node scripts/check-capabilities.mjs`. See [MCP execution usage](../docs/mcp.md#opt-in-execution-and-authoring-contract-v2).

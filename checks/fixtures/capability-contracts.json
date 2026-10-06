@@ -1,0 +1,502 @@
+[
+  {
+    "kind": "execution",
+    "name": "legacy opt-in empty",
+    "input": {},
+    "valid": true,
+    "normalized": {
+      "schema_version": 2,
+      "required_capabilities": [],
+      "purchase_entries": [],
+      "external_flows": [],
+      "actions": [],
+      "temporal_assertions": [],
+      "lifecycle": {
+        "before": [],
+        "notification_policy": "legacy_suppress"
+      },
+      "media_assertions": [],
+      "finish": "verify",
+      "timeout_seconds": 600
+    }
+  },
+  {
+    "kind": "execution",
+    "name": "target swipe",
+    "input": {
+      "required_capabilities": [
+        "target_gestures"
+      ],
+      "actions": [
+        {
+          "id": "reply",
+          "operation": "SWIPE",
+          "package": "com.example.synthetic",
+          "selector": {
+            "text": "Synthetic message"
+          },
+          "direction": "right"
+        }
+      ]
+    },
+    "valid": true,
+    "normalized": {
+      "schema_version": 2,
+      "required_capabilities": [
+        "target_gestures"
+      ],
+      "purchase_entries": [],
+      "external_flows": [],
+      "actions": [
+        {
+          "id": "reply",
+          "operation": "SWIPE",
+          "package": "com.example.synthetic",
+          "selector": {
+            "resource_id": "",
+            "text": "Synthetic message",
+            "class_name": ""
+          },
+          "destination": null,
+          "entry_id": "",
+          "direction": "right",
+          "duration_ms": 300,
+          "hold_ms": 400,
+          "count": 2,
+          "interval_ms": 100,
+          "wait_text": "",
+          "timeout_ms": 5000
+        }
+      ],
+      "temporal_assertions": [],
+      "lifecycle": {
+        "before": [],
+        "notification_policy": "legacy_suppress"
+      },
+      "media_assertions": [],
+      "finish": "verify",
+      "timeout_seconds": 600
+    }
+  },
+  {
+    "kind": "execution",
+    "name": "metadata",
+    "input": {
+      "required_capabilities": [
+        "media_metadata"
+      ],
+      "media_assertions": [
+        {
+          "id": "export",
+          "artifact": "export.mp4",
+          "width": 720,
+          "height": 1280
+        }
+      ]
+    },
+    "valid": true,
+    "normalized": {
+      "schema_version": 2,
+      "required_capabilities": [
+        "media_metadata"
+      ],
+      "purchase_entries": [],
+      "external_flows": [],
+      "actions": [],
+      "temporal_assertions": [],
+      "lifecycle": {
+        "before": [],
+        "notification_policy": "legacy_suppress"
+      },
+      "media_assertions": [
+        {
+          "id": "export",
+          "artifact": "export.mp4",
+          "width": 720,
+          "height": 1280,
+          "duration_min_ms": 0,
+          "duration_max_ms": 3600000,
+          "required": true,
+          "kind": "metadata",
+          "frame_start_ms": 0,
+          "frame_end_ms": 1000,
+          "minimum_change": 0.02
+        }
+      ],
+      "finish": "verify",
+      "timeout_seconds": 600
+    }
+  },
+  {
+    "kind": "execution",
+    "name": "missing requirement",
+    "input": {
+      "actions": [
+        {
+          "id": "reply",
+          "operation": "SWIPE",
+          "package": "com.example.synthetic",
+          "selector": {
+            "text": "Message"
+          }
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "kind": "execution",
+    "name": "invalid selector",
+    "input": {
+      "actions": [
+        {
+          "id": "tap",
+          "operation": "TAP",
+          "package": "com.example.synthetic",
+          "selector": {}
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "kind": "execution",
+    "name": "invalid order",
+    "input": {
+      "required_capabilities": [
+        "temporal_ui"
+      ],
+      "actions": [
+        {
+          "id": "trigger",
+          "operation": "OBSERVE",
+          "package": "com.example.synthetic"
+        }
+      ],
+      "temporal_assertions": [
+        {
+          "id": "ordered",
+          "after_action": "trigger",
+          "mode": "ordered",
+          "text": "Ready",
+          "context_text": "Synthetic",
+          "window_ms": 1000
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "kind": "sandbox",
+    "name": "legacy exact path",
+    "input": {
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "hosts": [
+        "example.test"
+      ],
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "responses": [
+            {}
+          ]
+        }
+      ]
+    },
+    "valid": true,
+    "normalized": {
+      "schema_version": 1,
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "description": "",
+      "hosts": [
+        "example.test"
+      ],
+      "unmatched": "block",
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "method": "GET",
+          "responses": [
+            {
+              "status": 200,
+              "body": "{}",
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "delay_ms": 0
+            }
+          ],
+          "exhaustion": "repeat_last",
+          "required_hits": 1
+        }
+      ],
+      "websocket": []
+    }
+  },
+  {
+    "kind": "sandbox",
+    "name": "v2 matching",
+    "input": {
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "hosts": [
+        "example.test"
+      ],
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "responses": [
+            {}
+          ],
+          "match": [
+            {
+              "source": "query",
+              "key": "buddy",
+              "value": "synthetic-b"
+            }
+          ],
+          "correlation": {
+            "source": "query",
+            "key": "login"
+          },
+          "assertions": [
+            {
+              "id": "count",
+              "source": "json",
+              "key": "/messages",
+              "kind": "count",
+              "expected": 10
+            }
+          ]
+        }
+      ],
+      "schema_version": 2
+    },
+    "valid": true,
+    "normalized": {
+      "schema_version": 2,
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "description": "",
+      "hosts": [
+        "example.test"
+      ],
+      "unmatched": "block",
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "method": "GET",
+          "responses": [
+            {
+              "status": 200,
+              "body": "{}",
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "delay_ms": 0
+            }
+          ],
+          "exhaustion": "repeat_last",
+          "required_hits": 1,
+          "path_template": false,
+          "match": [
+            {
+              "source": "query",
+              "key": "buddy",
+              "operator": "equals",
+              "value": "synthetic-b"
+            }
+          ],
+          "correlation": {
+            "source": "query",
+            "key": "login"
+          },
+          "advance_on": "",
+          "emit_event": "",
+          "assertions": [
+            {
+              "source": "json",
+              "key": "/messages",
+              "id": "count",
+              "kind": "count",
+              "expected": 10
+            }
+          ]
+        }
+      ],
+      "websocket": []
+    }
+  },
+  {
+    "kind": "sandbox",
+    "name": "legacy late pushes",
+    "input": {
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "hosts": [
+        "example.test"
+      ],
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "responses": [
+            {}
+          ]
+        }
+      ],
+      "websocket": [
+        {
+          "id": "ws",
+          "host": "example.test",
+          "path": "/ws",
+          "pushes": [
+            {
+              "after_ms": 300000
+            }
+          ]
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "kind": "sandbox",
+    "name": "v2 late pushes",
+    "input": {
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "hosts": [
+        "example.test"
+      ],
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "responses": [
+            {}
+          ]
+        }
+      ],
+      "schema_version": 2,
+      "websocket": [
+        {
+          "id": "ws",
+          "host": "example.test",
+          "path": "/ws",
+          "pushes": [
+            {
+              "after_ms": 300000
+            }
+          ]
+        }
+      ]
+    },
+    "valid": true,
+    "normalized": {
+      "schema_version": 2,
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "description": "",
+      "hosts": [
+        "example.test"
+      ],
+      "unmatched": "block",
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "method": "GET",
+          "responses": [
+            {
+              "status": 200,
+              "body": "{}",
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "delay_ms": 0
+            }
+          ],
+          "exhaustion": "repeat_last",
+          "required_hits": 1,
+          "path_template": false,
+          "match": [],
+          "correlation": null,
+          "advance_on": "",
+          "emit_event": "",
+          "assertions": []
+        }
+      ],
+      "websocket": [
+        {
+          "id": "ws",
+          "host": "example.test",
+          "path": "/ws",
+          "frames": [],
+          "pushes": [
+            {
+              "after_ms": 300000,
+              "body": "{}",
+              "trigger_event": ""
+            }
+          ],
+          "required_hits": 1,
+          "path_template": false,
+          "match": [],
+          "correlation": null
+        }
+      ]
+    }
+  },
+  {
+    "kind": "sandbox",
+    "name": "secret matching",
+    "input": {
+      "id": "synthetic",
+      "name": "Synthetic fixture",
+      "project": "Synthetic",
+      "hosts": [
+        "example.test"
+      ],
+      "http": [
+        {
+          "id": "read",
+          "host": "example.test",
+          "path": "/synthetic",
+          "responses": [
+            {}
+          ],
+          "match": [
+            {
+              "source": "header",
+              "key": "Authorization",
+              "value": "private"
+            }
+          ]
+        }
+      ],
+      "schema_version": 2
+    },
+    "valid": false
+  }
+]
