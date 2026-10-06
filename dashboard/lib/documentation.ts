@@ -17,7 +17,7 @@ export const documentation: DocSection[] = [
     summary: 'An evidence-first workspace for testing mobile apps with an LLM, a device runner, and human review.',
     blocks: [
       { kind: 'text', text: `${brand.name} turns a testing goal into a repeatable case, executes it on an Android or iOS device, and saves the observations behind the result. The dashboard brings cases, suites, run history, checkpoints, screenshots, recordings, logs, and reviews together.` },
-      { kind: 'text', text: `${brand.name} is the platform: the case library, automation, verification, network sandbox, scenario matrices, evidence, and review tools. The current runner uses Jev for action selection and classification, and Appium for device control. The name ${brand.name} reflects a curious fox that explores apps and investigates results.` },
+      { kind: 'text', text: `${brand.name} is the platform: the case library, automation, verification, network sandbox, scenario matrices, evidence, and review tools. The current runner uses Jev for action selection and classification, native ADB for Android device control, and Appium/XCUITest for iOS. The name ${brand.name} reflects a curious fox that explores apps and investigates results.` },
       { kind: 'list', title: 'Our testing philosophy', items: [
         'Explore before defining a test. Base steps on observed screens and transitions; do not invent navigation or selectors.',
         'Define success before execution. Turn each acceptance criterion into a specific, observable checkpoint.',
@@ -49,18 +49,18 @@ export const documentation: DocSection[] = [
   },
   {
     id: 'architecture', category: 'Understand the platform', title: 'How execution works',
-    summary: 'The host LLM defines intent; Jev chooses actions; Appium controls the device; checkpoints verify observations.',
+    summary: 'The host LLM defines intent; Jev chooses actions; ADB (Android) or Appium (iOS) controls the device; checkpoints verify observations.',
     blocks: [
       { kind: 'list', ordered: true, items: [
         'The host LLM reads the request, acceptance criteria, existing case history, and the canonical test template. It proposes steps and observable checkpoints based on app exploration.',
         'MCP tools or the dashboard accept a definition and an explicit device. Saved-library execution freezes the selected revision before device actions.',
         'The local runner launches the app and checks structured starting conditions. Missing or uncertain prerequisites produce Blocked.',
         'The runner observes the native hierarchy. TypeSafe’s Jev model selects an indexed operation and target from available choices; the runner re-observes the target before acting.',
-        'Appium executes the interaction. UiAutomator2 handles Android; XCUITest handles iOS. ADB remains an Android support tool for discovery, diagnostics, settings, and recording.',
+        'Native ADB executes Android interactions by default and also handles discovery, diagnostics, settings, and recording. Appium/XCUITest handles iOS. Appium/UiAutomator2 is an opt-in Android backend (SCOUT_ANDROID_DRIVER=appium).',
         'Checkpoint verification evaluates accessible observations as the run proceeds or ends. The navigation model reporting DONE does not by itself produce Passed.',
         'The result and available evidence are saved locally and synced to the dashboard. A reviewer can investigate and accept or dispute the original decisions.'
       ] },
-      { kind: 'code', title: 'System boundaries', language: 'Architecture', code: 'User / host LLM\n  → MCP tools or dashboard\n  → local Python bridge and runner\n  → Jev action selection ↔ native observations\n  → Appium → Android / iOS app\n  → checkpoint verification\n  → local artifacts → dashboard records + evidence\n  → human review' },
+      { kind: 'code', title: 'System boundaries', language: 'Architecture', code: 'User / host LLM\n  → MCP tools or dashboard\n  → local Python bridge and runner\n  → Jev action selection ↔ native observations\n  → ADB → Android app · Appium → iOS app\n  → checkpoint verification\n  → local artifacts → dashboard records + evidence\n  → human review' },
       { kind: 'text', text: 'The dashboard does not directly operate a USB device. The bridge runs on the computer connected to the device. ARTEMIS may be used when exploring apps during development, but it is not the Scout runtime runner.' }
     ]
   },
@@ -151,7 +151,7 @@ export const documentation: DocSection[] = [
     summary: 'A shared case and verification model with platform-specific device behavior.',
     blocks: [
       { kind: 'table', columns: ['Platform', 'Prerequisites / boundaries'], rows: [
-        ['Android', 'Authorized device or emulator, installed UAT package, Android SDK/JDK, and UiAutomator2. ADB supports discovery, metadata, logs, prompt settings, and recording.'],
+        ['Android', 'Authorized device or emulator, installed UAT package, and Android platform-tools (adb). ADB drives the runner and supports discovery, metadata, logs, prompt settings, and recording. UiAutomator2/Appium is only needed when opting into SCOUT_ANDROID_DRIVER=appium.'],
         ['iOS simulator', 'macOS, full Xcode, XCUITest, a booted available simulator, and an installed app bundle. Jev does not automatically boot/reset simulators.'],
         ['Physical iPhone', 'Pair/trust the Mac, enable Developer Mode, unlock the phone, and configure signed WebDriverAgent with your Apple development team.'],
         ['iOS interactions', 'Observed navigation controls instead of a universal Back action. Picker labels must be explicit; slider positions use 0–1.'],
