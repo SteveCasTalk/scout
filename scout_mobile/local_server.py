@@ -1,6 +1,7 @@
 """Loopback-only bridge between the Scout dashboard and mobile runner."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -12,9 +13,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .agent import Agent, RunConfig
 from . import dashboard_jobs
+from .evidence import inventory as evidence_inventory, allowed as evidence_allowed
 from .config import ROOT, load_local_env, getenv
 from .devices import connected
 from .branding import PRODUCT_NAME
+from .capabilities import capabilities, negotiate_case
+from .execution_contract import check_support, validate_authorizations
 
 
 load_local_env()
@@ -72,7 +76,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200 if job else 404, job or {"error": "Run session not found. The bridge may have restarted."})
             return
         if parsed.path == "/health":
-            self._json(200, {"status": "ready"})
+            self._json(200, {"status": "ready", "capabilities": capabilities("Android",getenv("SCOUT_ANDROID_DRIVER") or "appium"), "run_lock_held": RUN_LOCK.locked()})
             return
         session_match = re.fullmatch(r'/library-sessions/([A-Za-z0-9_-]{1,80})',parsed.path)
         if session_match:
@@ -125,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     if not isinstance(result, dict) or not str(result.get("case_id", "")).startswith("prompt-"):
                         continue
-                    artifacts = sorted(path.name for path in folder.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json", "run-verification.json", "sandbox.json"}))
+                    artifacts = [p.name for p in evidence_inventory(folder)]
                     runs.append({"run_id": folder.name, "result": result, "artifacts": artifacts})
             page = runs[:50]
             next_cursor = page[-1]["run_id"] if len(runs) > 50 else None
@@ -135,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             run_id, encoded_name = match.groups()
             name = unquote(encoded_name)
-            if name not in {"result.json", "trace.json", "jev-output.json", "run-verification.json", "sandbox.json"} and not re.fullmatch(r"\d{3}\.png|screen-recording-\d+\.mp4", name):
+            if not evidence_allowed(ROOT/"runner-output"/run_id,name):
                 self._json(400, {"error": "Unsupported artifact."})
                 return
             root = (ROOT / "runner-output").resolve()
@@ -144,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
             if folder.parent != root or artifact.parent != folder or not artifact.is_file():
                 self._json(404, {"error": "Artifact not found."})
                 return
-            content_type = "image/png" if name.endswith(".png") else "video/mp4" if name.endswith(".mp4") else "application/json"
+            content_type = __import__("mimetypes").guess_type(name)[0] or "application/octet-stream"
             try:
                 data = artifact.read_bytes()
                 self._headers(200, content_type, len(data))
@@ -275,6 +279,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "max_steps must be between 1 and 100."})
                 return
 
+            execution=check_support(case,case.get("platform","Android"),getenv("SCOUT_ANDROID_DRIVER") or "appium")
+            negotiate_case(case,execution,payload.get("client_capabilities"))
+            grants=validate_authorizations(payload.get("authorizations"),execution)
             adb = getenv("ADB_PATH") or "adb"
             devices = connected(case.get("platform", "Android"), adb)
             if serial:
@@ -290,18 +297,22 @@ class Handler(BaseHTTPRequestHandler):
 
             output = ROOT / "runner-output" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             assertion = str(case.get("assertion_text", "")).strip()
-            agent = Agent(RunConfig(package, device_serial, case, output, adb, max_steps, 180, assertion))
+            agent = Agent(RunConfig(package, device_serial, case, output, adb, max_steps, 180, assertion,authorizations=grants))
             device = agent.device
-            with device.screen_recording(output), device.suppress_credential_prompts(), device.suppress_notification_prompt(package):
+            agent.lease.acquire();agent.lease_managed=True
+            with device.screen_recording(output), device.suppress_credential_prompts(), (nullcontext() if execution and execution["lifecycle"]["notification_policy"]=="preserve" else device.suppress_notification_prompt(package)):
                 result = agent.run()
             result = agent.finalize_evidence(result)
-            artifacts = sorted(path.name for path in output.iterdir() if path.is_file() and (path.suffix in {".png", ".mp4"} or path.name in {"result.json", "trace.json", "jev-output.json", "sandbox.json"}))
+            artifacts = [p.name for p in evidence_inventory(output)]
             self._json(200, {"run_id": output.name, "result": result, "artifacts": artifacts})
         except Exception as exc:
             self._json(500, {"error": f"Scout runner failed: {type(exc).__name__}: {str(exc)[:300]}"})
         finally:
-            if agent:agent.device.close()
-            RUN_LOCK.release()
+            try:
+                if agent:
+                    try:agent.device.close()
+                    finally:agent.lease.release()
+            finally:RUN_LOCK.release()
 
 
 def main() -> None:

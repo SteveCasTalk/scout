@@ -158,5 +158,24 @@ class AppiumAndroidDevice(AndroidDevice):
     def swipe_coordinates(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int) -> None:
         self._call(lambda driver: driver.swipe(x1, y1, x2, y2, duration_ms))
 
+    def _pointer_sequence(self, actions: list[dict]) -> None:
+        from selenium.webdriver.remote.command import Command
+        self._call(lambda driver: driver.execute(Command.W3C_ACTIONS, {'actions': [{'type': 'pointer', 'id': 'scout-touch', 'parameters': {'pointerType': 'touch'}, 'actions': actions}]}))
+
+    def drag_coordinates(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int, hold_ms: int) -> None:
+        self._pointer_sequence([{'type':'pointerMove','duration':0,'x':x1,'y':y1,'origin':'viewport'}, {'type':'pointerDown','button':0}, {'type':'pause','duration':hold_ms}, {'type':'pointerMove','duration':duration_ms,'x':x2,'y':y2,'origin':'viewport'}, {'type':'pointerUp','button':0}])
+
+    def tap_burst(self, element: Element, count: int, interval_ms: int) -> dict:
+        # All taps are one native sequence; host/model turns cannot stretch the interval.
+        if not 2 <= count <= 5 or not 50 <= interval_ms <= 1000:
+            raise DeviceError('Invalid bounded tap burst.')
+        x,y=element.center
+        actions=[{'type':'pointerMove','duration':0,'x':x,'y':y,'origin':'viewport'}]
+        for index in range(count):
+            if index:actions.append({'type':'pause','duration':interval_ms})
+            actions.extend([{'type':'pointerDown','button':0},{'type':'pointerUp','button':0}])
+        start=time.monotonic_ns();self._pointer_sequence(actions);end=time.monotonic_ns()
+        return {'count':count,'interval_ms':interval_ms,'requested_offsets_ms':[i*interval_ms for i in range(count)],'dispatch_duration_ms':round((end-start)/1_000_000),'timing_source':'native_requested_offsets','delivery_timestamps_verified':False}
+
     def back(self) -> None:
         self._call(lambda driver: driver.back())

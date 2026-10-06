@@ -296,3 +296,130 @@ with `[]`; for a delayed server error, explicitly set the response status, delay
 and contract-compatible body. These tools do not invent field names or prove
 semantic API compatibility. Review synthetic data and privacy, then call
 `save_sandbox_scenario` and attach the draft to the intended case before replay.
+
+## Opt-in execution and authoring (contract v2)
+
+Read `get_runner_capabilities(platform="Android", backend="appium")` and
+`get_test_case_template` before using new execution fields. Discovery publishes
+contract versions, adapter features, bounded limits and the startup source hash.
+`diagnose_environment(serial=..., package=..., workspace_id=...)` reports dependency
+readiness without launching apps, changing settings, starting listeners or signing
+in. A selected busy device is not probed for its app build. Authentication, proxy
+routing, CA trust and feature readiness remain separate from HTTP availability.
+
+Saved definitions can include an optional `execution` object. Its complete schema
+is returned by the template. Missing `execution` retains legacy behavior. Version 2
+supports exact resource-ID/text selectors, target-relative `SWIPE`, held `DRAG`,
+native `TAP_BURST`, `PURCHASE_ENTRY`, `TAP`, `BACK` and `OBSERVE`. Ambiguous,
+disabled, hidden or out-of-viewport targets are blocked. It does not guess coordinate
+fallbacks. Appium supports these actions on Android; ADB declines the combined
+native gesture/burst requirements. Android execution/lifecycle additions are not
+advertised for iOS. Existing iOS and Android aliases remain available.
+
+`finish="verify"` runs the typed sequence and evaluates its evidence;
+`finish="model"` resumes existing model navigation after the typed sequence.
+Purchase entry always uses `verify`, with only observation or a declared safe return
+after entry. Free-text model steps retain the existing purchase prohibition.
+
+A synthetic example of the execution field (not a Twomi selector):
+
+```json
+{
+  "schema_version": 2,
+  "required_capabilities": ["target_gestures", "temporal_ui"],
+  "actions": [{
+    "id": "message_swipe", "operation": "SWIPE", "package": "com.example.synthetic",
+    "selector": {"resource_id": "com.example.synthetic:id/message"},
+    "direction": "left", "duration_ms": 300
+  }],
+  "temporal_assertions": [{
+    "id": "reply_ready", "after_action": "message_swipe", "mode": "within",
+    "text": "Reply", "context_text": "Synthetic conversation", "window_ms": 2000
+  }],
+  "finish": "verify"
+}
+```
+
+Temporal windows start at typed dispatch completion, using the host monotonic clock.
+The shared observer samples all predicates triggered by that action through one
+device owner. Modes are `within`, `stable_for`, `never_during`, `ordered` and `until`.
+Samples record start/end, context, predicates and fingerprints. A sample completing
+after the deadline cannot establish an on-time observation or a violation inside
+that deadline. Missing triggers, gaps, interruption, ambiguous order and truncation
+remain incomplete. `never_during` cannot pass from UI samples. `continuous_events`
+requests remain not observable until an instrumented source exists. Native tap
+intervals are requested sequence offsets, not measured delivery timestamps.
+Existing checkpoint scopes retain their original meanings.
+
+Purchase declarations require an exact selector, screen precondition and expected
+destination. For direct exported/prompt runs, supply the separate run grant:
+
+```json
+{"authorizations":{"purchase_entries":["declared_entry_id"],"clear_data":false}}
+```
+
+For saved cases, suites and matrices, `authorizations` is a mapping from case UUID
+to that grant object. It applies only to the selected, pinned definitions. Each
+matrix variant has its own run and allowance. A dispatch is consumed and journaled
+before the tap; ambiguous failure cannot retry it in the same run. Saved start
+retries use the same `request_id` and never start another child run. Direct
+prompt/export tool calls each start a new run; inspect the previous result after
+an unknown response instead of repeating a purchase call. An output directory
+containing v2 evidence cannot be reused. CLI equivalents are repeated
+`--allow-purchase-entry ENTRY_ID` and `--allow-clear-data` flags. `allow_consent`
+authorizes no purchase or reset. Checkout commitment remains blocked, including
+in approved Play destinations; this covers purchase entry only, not full P04.
+
+`external_flows` declares destination/source packages, destination entry text,
+expected target return text, allowed tap selectors, back permission, duration and
+action budgets. Package membership grants no other control. An embedded WebView
+normally stays inside the current package. External browsers/apps need their own
+flow. Unknown packages and wrong return screens stop the run. A flow can explicitly
+end at its destination using `require_return=false`; checkout is observation/back
+only. Package availability does not establish accessible controls or app readiness.
+
+Lifecycle `before` hooks support terminate, declared Android permission changes,
+Wi-Fi changes and separately authorized `clear_data`. Reversible settings are
+journaled before mutation, restored in reverse order and verified. A pending/failed
+journal blocks subsequent runs even after process restart. Use
+`reconcile_device_cleanup(run_id, serial)` only to restore those recorded settings
+on the selected idle device; it does not reset data or rerun actions. New notification
+cases can choose `notification_policy="preserve"`; legacy suppression remains the
+default. Fixture seeding and cache/account setup still require real app procedures.
+OS device leases cover MCP, CLI and bridge ownership, including paused runs.
+
+Optional `media_assertions` inspect explicitly supplied files in the run output
+folder. `metadata` checks duration/dimensions; `frame_change` checks two file frames
+against `minimum_change`. Results name their verifier/version and source hash.
+Missing artifacts, ffprobe/ffmpeg or usable frames remain not observable. These
+checks do not prove playback correctness, mute, audio output, blur or outfit
+appearance. No media tooling is installed automatically. Sources can be inspected
+up to 250 MB; declared sources up to 25 MB are eligible for dashboard/export sync.
+Larger sources stay local; the report still records their reference/hash.
+
+`validate_test_cases(workspace_id, items)` dry-runs full saved definitions.
+`create_test_case(workspace_id, definition, request_id)` creates;
+`update_test_case(workspace_id, case_id, expected_revision, definition, request_id)`
+updates. `import_test_cases(workspace_id, items, dry_run=true)` validates or saves
+1–100 independently atomic items, at most 1 MB total. Each item has `request_id`
+and `case`; updates also include `id` and `expected_revision`. Same request and
+payload returns the original response; changed payload conflicts. Updates check
+revision and ownership. Partial errors are explicit. Dry runs reserve nothing;
+authoring never executes a device action.
+
+New definitions export in `{"format":"scout-case-v2","case":...}`; legacy cases
+remain flat. Baseline loaders reject the envelope before device inventory. New
+server freeze/edit/import/run paths require capable clients; old clients can still
+use legacy cases. New definitions, frozen revisions, matrix entries and run
+snapshots preserve execution settings. Do not downgrade the dashboard server while
+v2 definitions are runnable; retain compatibility gates during rollback.
+
+`result.json` retains its legacy schema/status fields and adds execution definition,
+normalized fingerprint, component identity, reason code and evidence reference.
+`execution-evidence.json` holds bounded samples, events, consumed purchase IDs and
+independent temporal/media verdicts. V2 proxy events use the same run monotonic
+origin when started by the runner. Dashboard reports show these assertions
+separately; compact legacy traces remain readable. Original results and human
+reviews are not rewritten. Public evidence now also includes sandbox/execution
+reports, recordings and declared media sources; cleanup journals and private
+snapshots remain excluded.

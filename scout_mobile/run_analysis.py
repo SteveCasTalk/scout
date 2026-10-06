@@ -18,11 +18,13 @@ class Hit(Strict):
 class Event(Strict):
     elapsed_ms: int = Field(ge=0)
     rule_id: str
-    action: Literal['mock', 'replace', 'drop', 'push', 'unmatched_block', 'passthrough', 'exhausted', 'error', 'connected']
+    action: Literal['mock', 'replace', 'drop', 'push', 'unmatched_block', 'passthrough', 'exhausted', 'error', 'connected', 'request_assertion']
     status: int | None = Field(default=None, ge=200, le=599)
     response_index: int | None = Field(default=None, ge=0, le=19)
     delay_ms: int | None = Field(default=None, ge=0, le=30000)
     direction: Literal['client', 'server'] | None = None
+    assertion: dict | None = None
+    clock_source: Literal['proxy_monotonic','run_monotonic'] | None = None
 
 
 class NetworkReport(Strict):
@@ -66,7 +68,7 @@ def network_report(client, saved: dict, event_offset: int = 0, event_limit: int 
         return {**context, 'availability': 'unavailable', 'reason': 'The network artifact is unavailable or does not match the supported report schema.'}
     rules = {r['id']: r for r in fixture['http'] + fixture['websocket']}
     counts = Counter(e.rule_id for e in report.events if e.action in {'mock', 'replace', 'drop', 'push'})
-    blocked = sum(e.action in {'unmatched_block', 'exhausted', 'error'} for e in report.events)
+    blocked = sum(e.action in {'unmatched_block', 'exhausted', 'error'} or (e.action=='request_assertion' and (e.assertion or {}).get('verdict')!='satisfied') for e in report.events)
     requirements = [{'id': r['id'], 'required_hits': r['required_hits'], 'actual_hits': counts[r['id']]}
                     for r in rules.values()]
     missing = [r['id'] for r in requirements if r['actual_hits'] < r['required_hits']]

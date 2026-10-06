@@ -1,5 +1,5 @@
 import { context, failure, HttpError, bucket } from '@/lib/server';
-const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'video/mp4', 'video/webm', 'text/plain', 'application/json']);
+const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime', 'audio/mpeg', 'audio/wav', 'audio/x-wav', 'text/plain', 'application/json']);
 export async function GET(request: Request) { try {
     const { db, owner } = await context(request);
     const runId = new URL(request.url).searchParams.get('run_id');
@@ -20,7 +20,7 @@ export async function POST(request: Request) { try {
     if (!(file instanceof File) || typeof runId !== 'string')
         throw new HttpError(400, 'Choose a file and run.');
     if (!allowed.has(file.type))
-        throw new HttpError(400, 'Use PNG, JPEG, WebP, MP4, WebM, TXT, or JSON.');
+        throw new HttpError(400, 'Use PNG, JPEG, WebP, MP4, WebM, MOV, MP3, WAV, TXT, or JSON.');
     if (!file.size || file.size > 25 * 1024 * 1024)
         throw new HttpError(413, 'Files must be nonempty and 25 MB or smaller.');
     const run = await db.prepare('SELECT id FROM runs WHERE id=? AND owner=?').bind(runId, owner).first();

@@ -2,7 +2,7 @@
 
 The current dashboard is a persistent foundation, not an autonomous testing engine.
 
-Start with one selected Android device and one app flow. Use ARTEMIS to inspect the real UI and verify interactions before authoring mobile test code, following the workspace testing instructions. iOS needs a separate platform driver; no iOS execution support is claimed today.
+Start with one selected Android device and one app flow. Use Scout to inspect the real UI and verify interactions before authoring mobile test code, following the repository's [mobile testing instructions](../../AGENTS.md). ARTEMIS is optional and only used when explicitly requested. iOS needs a separate platform driver; no iOS execution support is claimed today.
 
 Proposed work:
 

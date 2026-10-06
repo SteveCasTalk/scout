@@ -116,12 +116,115 @@ class Scenario(Strict):
         return self
 
 
+class Predicate(Strict):
+    source: Literal['query','header','json','path']
+    key: str = Field(min_length=1, max_length=240)
+    operator: Literal['equals','exists'] = 'equals'
+    value: str | int | float | bool | None = None
+
+    @model_validator(mode='after')
+    def safe(self):
+        if isinstance(self.value,float) and not __import__('math').isfinite(self.value):raise ValueError('Match values must be finite.')
+        if re.search(r'authorization|cookie|password|secret|token|api[-_]?key',self.key,re.I):
+            raise ValueError('Secret fields cannot be fixture match/assertion keys.')
+        if self.source=='json' and not self.key.startswith('/'):
+            raise ValueError('JSON fields use RFC 6901 pointers.')
+        if self.operator=='exists' and type(self.value) is not bool:
+            raise ValueError('Exists predicates require a boolean value.')
+        return self
+
+
+class Correlation(Strict):
+    source: Literal['query','header','json','path']
+    key: str = Field(min_length=1, max_length=240)
+
+    @model_validator(mode='after')
+    def safe(self):
+        Predicate(source=self.source,key=self.key)
+        return self
+
+
+class RequestAssertion(Correlation):
+    id: str = Field(pattern=ID)
+    kind: Literal['equals','exists','count','ordered','duplicate']
+    expected: str | int | float | bool | list[str] | None = None
+
+    @model_validator(mode='after')
+    def shape(self):
+        if isinstance(self.expected,float) and not __import__('math').isfinite(self.expected):raise ValueError('Expected values must be finite.')
+        if isinstance(self.expected,list) and any(len(v)>240 for v in self.expected):raise ValueError('Synthetic identifiers must be bounded.')
+        if self.kind=='count' and (type(self.expected) is not int or not 0<=self.expected<=10000):
+            raise ValueError('Count requires a bounded integer.')
+        if self.kind=='ordered' and (not isinstance(self.expected,list) or len(self.expected)>100):
+            raise ValueError('Ordered assertions require at most 100 synthetic identifiers.')
+        return self
+
+
+class HttpRuleV2(HttpRule):
+    path_template: bool = False
+    match: list[Predicate] = Field(default_factory=list, max_length=20)
+    correlation: Correlation | None = None
+    advance_on: str = Field(default='', max_length=60)
+    emit_event: str = Field(default='', max_length=60)
+    assertions: list[RequestAssertion] = Field(default_factory=list,max_length=20)
+
+
+class WsPushV2(WsPush):
+    after_ms: int = Field(default=0,ge=0,le=600000)
+    trigger_event: str = Field(default='',max_length=60)
+
+
+class WsRuleV2(WsRule):
+    path_template: bool = False
+    match: list[Predicate] = Field(default_factory=list,max_length=20)
+    correlation: Correlation | None = None
+    pushes: list[WsPushV2] = Field(default_factory=list,max_length=20)
+
+
+class ScenarioV2(Strict):
+    schema_version: Literal[2]
+    id: str = Field(pattern=ID)
+    name: str = Field(min_length=1,max_length=120)
+    project: str = Field(min_length=1,max_length=100)
+    description: str = Field(default='',max_length=2000)
+    hosts: list[str] = Field(min_length=1,max_length=20)
+    unmatched: Literal['block','passthrough'] = 'block'
+    http: list[HttpRuleV2] = Field(default_factory=list,max_length=40)
+    websocket: list[WsRuleV2] = Field(default_factory=list,max_length=20)
+
+    @model_validator(mode='after')
+    def consistent(self):
+        # Reuse v1 hostname/hit/ID checks; v2 match ambiguity is handled separately.
+        rules=[*self.http,*self.websocket]
+        if not rules or not any(r.required_hits for r in rules):raise ValueError('At least one rule must require a hit.')
+        if len(set(self.hosts))!=len(self.hosts) or len({r.id for r in rules})!=len(rules):raise ValueError('Hosts and rule IDs must be unique.')
+        for host in self.hosts:
+            if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?',host) or '..' in host:raise ValueError('Use exact lowercase hosts.')
+        for rule in rules:
+            if rule.host not in self.hosts:raise ValueError('Rule host must be in hosts.')
+            if isinstance(rule,WsRuleV2) and not rule.frames and not rule.pushes:raise ValueError('WS rule requires frame actions or pushes.')
+            if rule.path_template:
+                for segment in rule.path.split('/'):
+                    if ('{' in segment or '}' in segment) and not re.fullmatch(r'\{[A-Za-z][A-Za-z0-9_]*\}',segment):raise ValueError('Path parameters must occupy whole segments.')
+        events={r.emit_event for r in self.http if r.emit_event}
+        for rule in self.http:
+            for event in (rule.advance_on,rule.emit_event):
+                if event and not re.fullmatch(ID,event):raise ValueError('Use safe named event IDs.')
+            if rule.advance_on and rule.advance_on not in events:raise ValueError('Unknown response-advancement event.')
+            if len({a.id for a in rule.assertions})!=len(rule.assertions):raise ValueError('Assertion IDs must be unique within a rule.')
+        for rule in self.websocket:
+            if any(p.trigger_event and p.trigger_event not in events for p in rule.pushes):raise ValueError('Unknown WS push trigger event.')
+        keys=[json.dumps([type(r).__name__,r.host,r.path,getattr(r,'method','WS'),r.model_dump()['match']],sort_keys=True) for r in rules]
+        if len(set(keys))!=len(keys):raise ValueError('Duplicate v2 match rules are ambiguous.')
+        return self
+
+
 def validate(value: dict) -> dict:
     if not isinstance(value, dict):
         raise ValueError('Sandbox scenario must be a JSON object.')
     if len(json.dumps(value).encode()) > 400_000:
         raise ValueError('Sandbox scenario exceeds 400 KB.')
-    return Scenario.model_validate(value).model_dump()
+    return (ScenarioV2 if value.get('schema_version')==2 else Scenario).model_validate(value).model_dump()
 
 
 def fingerprint(value: dict) -> str:
@@ -184,8 +287,9 @@ def prepare_certificate() -> dict:
 
 
 class Session:
-    def __init__(self, scenario: dict, output: Path, recording: bool = False):
+    def __init__(self, scenario: dict, output: Path, recording: bool = False, run_origin: float | None = None):
         self.recording = recording
+        self.run_origin=run_origin
         if recording:
             from .sandbox_recording import CaptureOptions
             self.scenario = CaptureOptions.model_validate(scenario).model_dump()
@@ -228,6 +332,7 @@ class Session:
             env = os.environ.copy()
             env['SCOUT_SANDBOX_SCENARIO'] = str(snapshot)
             env['SCOUT_SANDBOX_OUTPUT'] = str(self.output)
+            if self.scenario.get('schema_version')==2 and self.run_origin is not None:env['SCOUT_RUN_MONOTONIC_ORIGIN']=str(self.run_origin)
             env['SCOUT_SANDBOX_PARENT_PID'] = str(os.getpid())
             env['SCOUT_SANDBOX_MODE'] = 'record' if self.recording else 'replay'
             env['PYTHONPATH'] = str(ROOT) + os.pathsep + env.get('PYTHONPATH', '')
@@ -281,7 +386,7 @@ class Session:
                 counts[event['rule_id']] = counts.get(event['rule_id'], 0) + 1
         requirements = [{'id': r['id'], 'required_hits': r['required_hits'], 'actual_hits': counts.get(r['id'], 0)} for r in [*self.scenario['http'], *self.scenario['websocket']]]
         missing = [r['id'] for r in requirements if r['actual_hits'] < r['required_hits']]
-        blocked = sum(e.get('action') in {'unmatched_block', 'exhausted', 'error'} for e in events)
+        blocked = sum(e.get('action') in {'unmatched_block', 'exhausted', 'error'} or (e.get('action')=='request_assertion' and e.get('assertion',{}).get('verdict')!='satisfied') for e in events)
         report = {'scenario_id': self.scenario['id'], 'name': self.scenario['name'], 'fingerprint': fingerprint(self.scenario), 'requirements': requirements, 'missing_rules': missing, 'blocked_events': blocked, 'proxy_failed': self.failed, 'status': 'inconclusive' if self.failed or missing or blocked or len(events) >= 5000 else 'satisfied', 'events': events, 'payloads_recorded': False}
         (self.output / 'sandbox.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
         return report

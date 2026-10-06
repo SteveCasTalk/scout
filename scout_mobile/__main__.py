@@ -10,6 +10,8 @@ from .agent import Agent,RunConfig
 from .config import ROOT,load_local_env,getenv
 from .devices import connected
 from .branding import PRODUCT_NAME
+from .execution_contract import decode_export
+from contextlib import nullcontext
 
 def main()->int:
     parser=argparse.ArgumentParser(description=f'{PRODUCT_NAME} mobile test runner')
@@ -27,10 +29,12 @@ def main()->int:
     parser.add_argument('--appium-url',default='',help='Local Appium URL; defaults to SCOUT_APPIUM_URL or http://127.0.0.1:4723')
     parser.add_argument('--output',type=Path)
     parser.add_argument('--max-steps',type=int,default=40)
+    parser.add_argument('--allow-purchase-entry',action='append',default=[],help='Authorize a declared purchase-entry ID for this run only')
+    parser.add_argument('--allow-clear-data',action='store_true',help='Authorize a declared app-data reset')
     parser.add_argument('--allow-device-prompts',action='store_true',help='Leave Android autofill and credential providers enabled during the run; notification prompts remain suppressed')
     args=parser.parse_args()
     if args.case:
-        case=json.loads(args.case.read_text(encoding='utf-8'))
+        case=decode_export(json.loads(args.case.read_text(encoding='utf-8')))
         for required in ('id','revision','goal','steps','expected'):
             if required not in case:parser.error(f'Case JSON is missing {required}.')
     elif args.goal:
@@ -50,14 +54,18 @@ def main()->int:
     output=args.output or ROOT/'runner-output'/datetime.now().strftime('%Y%m%d-%H%M%S')
     output=output.resolve()
     assertion=args.expected_text or case.get('assertion_text','')
-    agent=Agent(RunConfig(package,serial,case,output,args.adb,args.max_steps,180,assertion,backend=args.driver,appium_url=args.appium_url))
+    agent=Agent(RunConfig(package,serial,case,output,args.adb,args.max_steps,180,assertion,backend=args.driver,appium_url=args.appium_url,authorizations={'purchase_entries':args.allow_purchase_entry,'clear_data':args.allow_clear_data}))
     device=agent.device
     prompt_policy=nullcontext() if args.allow_device_prompts else device.suppress_credential_prompts()
     try:
-        with device.screen_recording(output),prompt_policy,device.suppress_notification_prompt(package):
+        agent.lease.acquire()
+        agent.lease_managed=True
+        with device.screen_recording(output),prompt_policy,(nullcontext() if agent.execution and agent.execution['lifecycle']['notification_policy']=='preserve' else device.suppress_notification_prompt(package)):
             result=agent.run()
         result=agent.finalize_evidence(result)
-    finally:device.close()
+    finally:
+        try:device.close()
+        finally:agent.lease.release()
     print(json.dumps({'status':result['status'],'notes':result['notes'],'result':str(output/'result.json'),'trace':str(output/'trace.json')},ensure_ascii=False))
     return 0 if result['status'] in ('Passed','Inconclusive') else 2
 

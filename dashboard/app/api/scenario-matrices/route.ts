@@ -1,10 +1,11 @@
+import { requireCaseCapabilities } from '@/lib/execution-contract';
 import { z } from 'zod';
 import { context, failure, HttpError, jsonBody } from '@/lib/server';
 import { decodeCase, retainRevision } from '@/lib/case-record';
 import { applyVariant, decodeMatrix, matrixInput, type MatrixSnapshot } from '@/lib/scenario-matrix';
 import { statuses, type Run } from '@/lib/contracts';
 
-const freezeInput = z.object({ action: z.literal('freeze'), workspace_id: z.string().uuid(), matrix_id: z.string().uuid(), batch_id: z.string().uuid(), request_signature: z.string().regex(/^[a-f0-9]{64}$/),
+const freezeInput = z.object({ action: z.literal('freeze'), runner_capabilities:z.unknown().optional(), workspace_id: z.string().uuid(), matrix_id: z.string().uuid(), batch_id: z.string().uuid(), request_signature: z.string().regex(/^[a-f0-9]{64}$/),
     expected_revision: z.number().int().positive(), expected_case_revision: z.number().int().positive(), variant_ids: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,40}$/)).min(1).max(20).optional(),
     settings: z.object({ serial: z.string().min(1).max(160), max_steps: z.number().int().min(1).max(100), start_mode: z.literal('relaunch'), allow_consent: z.boolean(), continue_on_failure: z.boolean(), conditions_confirmed: z.literal(true) }) });
 const outcomeInput = z.object({ entry_id: z.string().max(40), case_id: z.string().uuid(), revision: z.number().int().positive(), run_id: z.string().max(80), status: z.enum(statuses), dashboard_run_id: z.string().uuid().optional(), runner_error: z.string().max(500).optional(), sync_error: z.string().max(500).optional(), evidence_failures: z.array(z.string().max(100)).max(300).optional() });
@@ -76,6 +77,7 @@ export async function POST(request: Request) { try {
             if (existing.request_signature !== p.request_signature) throw new HttpError(409,'Batch ID already has different settings.');
             const executed=await db.prepare('SELECT id FROM runs WHERE owner=? AND workspace_id=? AND matrix_batch_id=? LIMIT 1').bind(owner,p.workspace_id,p.batch_id).first();
             if (executed || JSON.parse(String(existing.summary_json)).status !== 'prepared') throw new HttpError(409,'This batch was already accepted. Inspect its report; use a new request ID for an intentional rerun.');
+            for(const entry of JSON.parse(String(existing.entries_json)) as MatrixSnapshot[])requireCaseCapabilities(entry,p.runner_capabilities);
             return Response.json({cases:JSON.parse(String(existing.entries_json)),matrix_name:existing.matrix_name,matrix_revision:existing.matrix_revision});
         }
         const row = await db.prepare('SELECT * FROM scenario_matrices WHERE id=? AND owner=? AND workspace_id=? AND revision=?').bind(p.matrix_id,owner,p.workspace_id,p.expected_revision).first();
@@ -83,7 +85,8 @@ export async function POST(request: Request) { try {
         const matrix = decodeMatrix(row);
         const baseRow = await db.prepare('SELECT * FROM test_cases WHERE id=? AND owner=? AND workspace_id=? AND revision=?').bind(matrix.case_id,owner,p.workspace_id,p.expected_case_revision).first();
         if (!baseRow) throw new HttpError(409,'The base case changed. Reload before running.');
-        const base = decodeCase(baseRow), ids = p.variant_ids || matrix.variants.map(v => v.id);
+        const base = decodeCase(baseRow);requireCaseCapabilities(base,p.runner_capabilities);
+        const ids = p.variant_ids || matrix.variants.map(v => v.id);
         if (new Set(ids).size !== ids.length || ids.some(id => !matrix.variants.some(v => v.id === id))) throw new HttpError(400,'Select unique variants from this matrix.');
         if (matrix.variants.some(v => v.sandbox.project !== base.project)) throw new HttpError(409,'Fixture projects must match the base case.');
         const entries = ids.map(id => applyVariant(base,matrix,matrix.variants.find(v => v.id===id)!,p.batch_id)), created = new Date().toISOString();

@@ -1,4 +1,6 @@
 import vinext from "vinext";
+import { sourceIdentity } from "./build/source-identity.mjs";
+const sourceHash=sourceIdentity(process.cwd());
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { readExecutionProfile } from "./scripts/execution-profile.mjs";
@@ -51,6 +53,7 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: { "process.env.SCOUT_DASHBOARD_SOURCE_SHA256": JSON.stringify(sourceHash) },
     server: {
       ...(managedLinux ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] } : {}),
       ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
