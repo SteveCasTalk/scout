@@ -24,7 +24,7 @@ Open **Documentation** in the dashboard sidebar or visit `/docs` on its active l
 - Scenario matrices run one saved case against several fixtures with variant-specific checkpoints, frozen snapshots, live progress and grouped results in the dashboard or MCP.
 - `.env`: local, Git-ignored owner-only UAT credentials and model keys. Copy `.env.example` if needed, then fill values locally; see [test account setup](docs/test-account.md). **Do not send credentials in chat or put them in test cases.**
 
-The runner supports Android through Appium/UiAutomator2 and iOS through Appium/XCUITest on macOS. Jev chooses operations and targets; Appium provides native observations, actions, and screenshots. ADB supports Android discovery, diagnostics, prompt settings, and recording. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. The runner also captures screen-recording clips on both platforms when recording prerequisites are available for each execution segment; Jev and dashboard imports attach the MP4 clips to the test run when they are available.
+The runner supports Android through native ADB (UI Automator dumps and `adb shell input`) by default, and iOS through Appium/XCUITest on macOS. Jev chooses operations and targets; ADB (Android) or Appium (iOS) provides native observations, actions, and screenshots. ADB also handles Android discovery, diagnostics, prompt settings, and recording. Appium/UiAutomator2 remains available for Android as an opt-in backend. ARTEMIS is not used by the runner. It captures an action trace and screenshots, including an authenticated outcome screen when no input field or account value is visible. The runner also captures screen-recording clips on both platforms when recording prerequisites are available for each execution segment; Jev and dashboard imports attach the MP4 clips to the test run when they are available.
 
 ## Run from the dashboard
 
@@ -32,9 +32,12 @@ Prompt-driven MCP runs start the local dashboard and device bridge on demand whe
 
 ## Run a case
 
-Appium is the default Android backend and starts automatically when installed.
-Complete the [Appium setup](docs/appium-trial.md) once. Use `--driver adb` only
-when explicitly choosing the previous backend.
+Native ADB is the default Android backend; no Appium server is needed for
+Android. iOS always runs through Appium/XCUITest. To opt into Appium/UiAutomator2
+on Android, complete the [Appium setup](docs/appium-trial.md) and pass
+`--driver appium` or set `SCOUT_ANDROID_DRIVER=appium`. The ADB backend does not
+support the `tap_burst` and `target_gestures` execution capabilities; cases that
+require them need the Appium backend.
 
 1. Add a test case in the dashboard with its platform and app ID. Define observable required checkpoints; a literal visible-text assertion remains available as a legacy fallback.
 2. Export the case JSON from the Test cases table.

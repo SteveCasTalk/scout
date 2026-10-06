@@ -119,10 +119,11 @@ MCP callers should call `get_test_case_template` before authoring tests. `run_an
 
 ### Android backend
 
-Appium is the default. Follow [Appium setup](../docs/appium-trial.md) once, then
-start the bridge with `uv run python -m scout_mobile.local_server`. The installed
-local Appium server starts on demand. `SCOUT_ANDROID_DRIVER=adb` explicitly selects
-the previous backend. Restart the bridge and MCP server after switching backends.
+Native ADB is the default; start the bridge with
+`uv run python -m scout_mobile.local_server`. `SCOUT_ANDROID_DRIVER=appium` opts
+into Appium/UiAutomator2 (follow [Appium setup](../docs/appium-trial.md) once; the
+local server starts on demand). iOS always uses Appium/XCUITest. Restart the
+bridge and MCP server after switching backends.
 
 ### Android and iOS comparison
 

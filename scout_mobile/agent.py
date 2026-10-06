@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Callable
-from .config import ROOT,getenv
+from .config import ROOT,getenv,default_backend
 from .device import AndroidDevice, DeviceError, Element, Screen
 from .model import ModelError, choose, field_text
 from .checkpoints import validate_checkpoints, evaluate as evaluate_checkpoints
@@ -58,7 +58,7 @@ class Agent:
         if config.platform and config.test_case.get('platform') and config.platform!=config.test_case['platform']:raise ValueError('Run platform conflicts with the test case.')
         self.platform=config.platform or config.test_case.get('platform') or 'Android'
         if self.platform not in {'Android','iOS'}:raise ValueError('Platform must be Android or iOS.')
-        backend=config.backend or ('appium' if self.platform=='iOS' else getenv('SCOUT_ANDROID_DRIVER') or 'appium')
+        backend=config.backend or default_backend(self.platform)
         if self.platform=='iOS' and backend!='appium':raise ValueError('iOS requires Appium/XCUITest.')
         self.backend=backend
         self.lease=DeviceLease(config.serial)

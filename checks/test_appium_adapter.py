@@ -13,13 +13,15 @@ XML = '<hierarchy><android.widget.Button text="Continue" class="android.widget.B
 
 
 class AppiumAdapterTests(unittest.TestCase):
-    def test_appium_is_default_and_adb_is_an_explicit_override(self):
+    def test_adb_is_android_default_and_appium_is_an_explicit_override(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'SCOUT_ANDROID_DRIVER': ''}):
             default = Agent(RunConfig('app', 'fake', {}, Path(directory)))
-            self.assertIsInstance(default.device, AppiumAndroidDevice)
-            self.assertEqual(default.device.idle_timeout_ms, 1000)
-            fallback = Agent(RunConfig('app', 'fake', {}, Path(directory), backend='adb'))
-            self.assertEqual(fallback.backend, 'adb')
+            self.assertEqual(default.backend, 'adb')
+            appium = Agent(RunConfig('app', 'fake', {}, Path(directory), backend='appium'))
+            self.assertIsInstance(appium.device, AppiumAndroidDevice)
+            self.assertEqual(appium.device.idle_timeout_ms, 1000)
+            ios = Agent(RunConfig('app', 'fake', {'platform': 'iOS'}, Path(directory)))
+            self.assertEqual(ios.backend, 'appium')
 
     def test_ready_appium_server_is_reused_without_starting_process(self):
         from scout_mobile.appium_runtime import ensure_appium

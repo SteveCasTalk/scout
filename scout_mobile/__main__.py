@@ -25,7 +25,7 @@ def main()->int:
     parser.add_argument('--platform',choices=['Android','iOS'],help='Defaults to the exported case platform or Android')
     parser.add_argument('--serial',help='Required when multiple devices are attached')
     parser.add_argument('--adb',default=getenv('ADB_PATH') or 'adb')
-    parser.add_argument('--driver',choices=['adb','appium'],default='',help='Android execution backend; defaults to SCOUT_ANDROID_DRIVER or appium')
+    parser.add_argument('--driver',choices=['adb','appium'],default='',help='Android execution backend; defaults to SCOUT_ANDROID_DRIVER or adb; iOS always uses appium')
     parser.add_argument('--appium-url',default='',help='Local Appium URL; defaults to SCOUT_APPIUM_URL or http://127.0.0.1:4723')
     parser.add_argument('--output',type=Path)
     parser.add_argument('--max-steps',type=int,default=40)

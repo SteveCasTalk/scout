@@ -7,7 +7,7 @@ import threading
 import time
 from .agent import Agent, RunConfig
 from .evidence import inventory as evidence_inventory
-from .config import ROOT,getenv
+from .config import ROOT,getenv,default_backend
 from .devices import connected
 from .execution_contract import check_support, validate_authorizations
 from .capabilities import capabilities, negotiate_case
@@ -57,7 +57,7 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
         raise ValueError('Set a valid app package or bundle ID on the case.')
     if case.get('platform') not in {'Android', 'iOS'}:
         raise ValueError('Select Android or iOS on the case.')
-    execution=check_support(case,case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium')
+    execution=check_support(case,case['platform'],default_backend(case['platform']))
     negotiate_case(case,execution,payload.get('client_capabilities'))
     grants=validate_authorizations(payload.get('authorizations'),execution)
     serial = payload.get('serial')
