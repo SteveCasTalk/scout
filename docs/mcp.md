@@ -307,6 +307,10 @@ readiness without launching apps, changing settings, starting listeners or signi
 in. A selected busy device is not probed for its app build. Authentication, proxy
 routing, CA trust and feature readiness remain separate from HTTP availability.
 
+`get_runner_pipeline()` lists the runner's layers and its node pipeline, including
+installed plugins. With `run_id` (and optionally `node`), it returns the nodes that
+run used and each node's outcome and timing. See [architecture](architecture.md).
+
 Saved definitions can include an optional `execution` object. Its complete schema
 is returned by the template. Missing `execution` retains legacy behavior. Version 2
 supports exact resource-ID/text selectors, target-relative `SWIPE`, held `DRAG`,

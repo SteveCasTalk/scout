@@ -15,7 +15,7 @@ from contextlib import nullcontext
 
 def main()->int:
     parser=argparse.ArgumentParser(description=f'{PRODUCT_NAME} mobile test runner')
-    parser.add_argument('run',nargs='?',default='run',choices=['run'])
+    parser.add_argument('run',nargs='?',default='run',choices=['run','nodes'],help='run a test (default) or list the run pipeline nodes')
     parser.add_argument('--case',type=Path,help='Exported dashboard test-case JSON')
     parser.add_argument('--goal',help='Goal for a one-off test; use --case for repeatable runs')
     parser.add_argument('--steps',default='')
@@ -33,6 +33,9 @@ def main()->int:
     parser.add_argument('--allow-clear-data',action='store_true',help='Authorize a declared app-data reset')
     parser.add_argument('--allow-device-prompts',action='store_true',help='Leave Android autofill and credential providers enabled during the run; notification prompts remain suppressed')
     args=parser.parse_args()
+    if args.run=='nodes':
+        load_local_env()
+        return print_nodes()
     if args.case:
         case=decode_export(json.loads(args.case.read_text(encoding='utf-8')))
         for required in ('id','revision','goal','steps','expected'):
@@ -68,5 +71,20 @@ def main()->int:
         finally:agent.lease.release()
     print(json.dumps({'status':result['status'],'notes':result['notes'],'result':str(output/'result.json'),'trace':str(output/'trace.json')},ensure_ascii=False))
     return 0 if result['status'] in ('Passed','Inconclusive') else 2
+
+def print_nodes()->int:
+    """Print the assembled pipeline, including installed plugins and disabled nodes."""
+    from .engine import PipelineError, build_pipeline
+    try:pipeline=build_pipeline()
+    except PipelineError as exc:
+        print(f'Pipeline error: {exc}')
+        return 2
+    for stage,nodes in pipeline.describe().items():
+        print(f'{stage}:')
+        for node in nodes:
+            flags=' [locked]' if node['locked'] else ''
+            print(f"  {node['name']:<30} {node['role']:<12} {node['summary']}{flags}")
+            if not node['source'].startswith('scout_mobile.'):print(f"  {'':<30} {'':<12} from {node['source']}")
+    return 0
 
 if __name__=='__main__':raise SystemExit(main())

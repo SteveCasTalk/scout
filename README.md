@@ -17,7 +17,7 @@ Open **Documentation** in the dashboard sidebar or visit `/docs` on its active l
 ## Current state
 
 - `dashboard/`: create and revise test cases, record manual runs, import Scout runner results, inspect per-step questions, answers, probabilities, confidence, and latency, attach evidence, and review saved test snapshots.
-- `scout_mobile/`: Python runner using native accessibility observations plus TypeSafe's Jev model to choose an indexed operation and target. It re-observes targets before acting and verifies required checkpoints before reporting Passed.
+- `scout_mobile/`: Python runner using native accessibility observations plus TypeSafe's Jev model to choose an indexed operation and target. It re-observes targets before acting and verifies required checkpoints before reporting Passed. The runner is layered, and each run executes as a pipeline of inspectable, pluggable nodes. Run `scout nodes` or see [architecture](docs/architecture.md).
 - MCP server: local tools for device discovery, Scout test execution, run history, and result inspection; see [MCP setup](docs/mcp.md).
 - Saved-library MCP tools discover cases/suites, inspect revisions, rerun cases or regressions, and monitor asynchronous progress with results synced to the local dashboard.
 - Analysis MCP tools draft sandbox variants, inspect network coverage and failure diagnostics, compare Android/iOS runs, and append reviews or labeled assistant notes.

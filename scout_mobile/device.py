@@ -406,19 +406,20 @@ class AndroidDevice:
         started=time.perf_counter()
         count=0
         observe_ms=0
+        last=None
         while time.monotonic()<deadline:
             time.sleep(.25)
-            next_screen=self.observe()
+            last=self.observe()
             count+=1
             observe_ms+=self.last_observation_timings.get('total_ms',0)
-            if next_screen.fingerprint!=previous.fingerprint:
-                self.last_wait_timings={'polls':count,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
-                return next_screen
-        final=self.observe()
-        count+=1
-        observe_ms+=self.last_observation_timings.get('total_ms',0)
+            if last.fingerprint!=previous.fingerprint:break
+        # The last poll is already a fresh observation; only observe again if no poll ran.
+        if last is None:
+            last=self.observe()
+            count+=1
+            observe_ms+=self.last_observation_timings.get('total_ms',0)
         self.last_wait_timings={'polls':count,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
-        return final
+        return last
 
     def wait_for_content(self,timeout:float=20) -> Screen:
         """Wait for content and a settled accessibility hierarchy after launch."""

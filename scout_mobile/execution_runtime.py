@@ -93,7 +93,7 @@ class Boundary:
 
 
 def check_action(agent,operation,element,screen,purchase=False):
-    from .agent import RISKY
+    from .safety import RISKY
     label=element.label if element else ''
     if element and (element.password or element.role=='textbox'):
         raise ExecutionBlocked('Typed actions cannot enter credentials or arbitrary text.')

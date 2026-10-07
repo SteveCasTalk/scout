@@ -567,6 +567,22 @@ def get_runner_capabilities(platform: Literal['Android','iOS'] = 'Android', back
 
 
 @mcp.tool()
+def get_runner_pipeline(run_id: str | None = None, node: str | None = None) -> dict[str, Any]:
+    """Inspect the run engine: layers and the node pipeline (with installed plugins), or with run_id the node graph and per-node outcomes/timings that run used. Optionally filter the trace to one node. Does not operate a device."""
+    from .architecture import describe as describe_layers
+    from .engine import build_pipeline
+    load_local_env()
+    if run_id is None:
+        return {"layers": describe_layers(), "pipeline": build_pipeline().describe()}
+    report = _read_run_json(_run_directory(run_id), "pipeline.json", None)
+    if report is None:
+        raise ValueError("This run has no pipeline.json; it predates the node pipeline.")
+    if node:
+        report["trace"] = [item for item in report["trace"] if item["node"] == node]
+    return {"run_id": run_id, **report}
+
+
+@mcp.tool()
 def diagnose_environment(serial: str | None = None, package: str | None = None, workspace_id: str | None = None) -> dict[str, Any]:
     """Read-only readiness. Credentials are presence-only; proxy routing/CA and feature readiness are not inferred. No app launch, reset or service startup."""
     load_local_env()
