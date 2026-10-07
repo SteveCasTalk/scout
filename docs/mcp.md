@@ -9,7 +9,7 @@ Install uv and Python 3.11 or newer, then install the project dependencies once:
     cd /Users/phucnguyen/Documents/ChatGPT/scout
     uv sync
 
-Android runs on native ADB by default, so no Appium server is required for Android. iOS always uses Appium/XCUITest; install it using [iOS setup](ios-appium.md). To opt into Appium/UiAutomator2 on Android (required for cases that declare `tap_burst` or `target_gestures`), follow [Appium setup](appium-trial.md) and set `SCOUT_ANDROID_DRIVER=appium`. The runner starts the installed local Appium server on demand.
+Android runs on native ADB by default, so no Appium server is required for Android. iOS always uses Appium/XCUITest; install it using [iOS setup](ios-appium.md). To opt into Appium/UiAutomator2 on Android (required for `tap_burst` and `DRAG` actions; ADB runs `target_gestures` swipes, and Appium with `SCOUT_APPIUM_IDLE_TIMEOUT_MS=0` can observe continuously animating screens that `uiautomator dump` cannot), follow [Appium setup](appium-trial.md) and set `SCOUT_ANDROID_DRIVER=appium`. The runner starts the installed local Appium server on demand.
 
 Copy .env.example to .env if needed and set TYPESAFE_API_KEY. Set SCOUT_TEST_EMAIL and SCOUT_TEST_PASSWORD locally when running authentication tests. To select a non-default ADB executable, set ADB_PATH in .env. MCP host-provided text does not require `TEXT_MODEL_API_KEY`; that key is for standalone runner use. Keep passwords and other credentials in the local credential provider, not in `enter_text`.
 

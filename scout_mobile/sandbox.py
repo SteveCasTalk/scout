@@ -272,6 +272,24 @@ def diagnose() -> dict:
 
 
 CERTIFICATE_LOCK = threading.Lock()
+PORT_RELEASE_SECONDS = 15
+
+
+def wait_for_port_release(host: str, port: int, family: int = socket.AF_INET, timeout: float = PORT_RELEASE_SECONDS) -> None:
+    """A previous session's worker releases its port asynchronously after stop(); back-to-back sessions
+    otherwise fail with EADDRINUSE. Wait briefly, then report the conflict. SO_REUSEADDR matches how the
+    proxy itself binds: TIME_WAIT connections left by the device do not block it, but a live listener does."""
+    deadline = time.monotonic() + timeout
+    while True:
+        with socket.socket(family) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, port))
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise ValueError(f'Sandbox port {port} is still in use by another process. Stop it or set SCOUT_SANDBOX_PORT.') from None
+        time.sleep(0.5)
 
 
 def prepare_certificate() -> dict:
@@ -324,8 +342,7 @@ class Session:
             except OSError:
                 raise ValueError('Another recording or sandbox replay owns the proxy. Stop it before starting a new session.') from None
             family = socket.AF_INET6 if ipaddress.ip_address(config['listen_host']).version == 6 else socket.AF_INET
-            with socket.socket(family) as probe:
-                probe.bind((config['listen_host'], config['port']))
+            wait_for_port_release(config['listen_host'], config['port'], family)
             snapshot = self.output / '.sandbox-scenario.json'
             snapshot.write_text(json.dumps(self.scenario), encoding='utf-8')
             snapshot.chmod(0o600)

@@ -180,7 +180,9 @@ def fingerprint(value):
 
 def supported(platform='Android', backend='appium'):
     if platform!='Android':return {'network_contract_v2','request_assertions'}
-    return FEATURES if backend=='appium' else FEATURES-{'tap_burst','target_gestures'}
+    # ADB dispatches targeted swipes with `input swipe` inside the element bounds; native bursts and
+    # drag-with-hold need Appium (drags are rejected per action in check_support).
+    return FEATURES if backend=='appium' else FEATURES-{'tap_burst'}
 
 def check_support(case, platform='Android', backend='appium'):
     execution=validate_execution(case.get('execution'))
@@ -190,6 +192,8 @@ def check_support(case, platform='Android', backend='appium'):
         missing=set(execution['required_capabilities'])-supported(platform,backend)
         if missing:raise ValueError('Unsupported capabilities for '+platform+'/'+backend+': '+', '.join(sorted(missing)))
         if platform!='Android':raise ValueError('Execution contract v2 actions and lifecycle currently require Android.')
+        if backend=='adb' and any(a['operation']=='DRAG' for a in execution['actions']):
+            raise ValueError('DRAG with an explicit hold requires the Appium adapter; ADB supports SWIPE only.')
     return execution
 
 def validate_authorizations(value, execution):

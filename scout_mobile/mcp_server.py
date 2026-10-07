@@ -581,10 +581,22 @@ def reconcile_device_cleanup(run_id: str, serial: str) -> dict[str, Any]:
     return reconcile(run_id,serial)
 
 
+def _normalize_case_item(item):
+    """Prompt runs take `package`; saved cases store `app_id`. The dashboard drops unknown keys, so an
+    unmapped `package` used to save a case with no app that every later run rejected."""
+    if not isinstance(item,dict) or not isinstance(item.get('case'),dict):return item
+    case=dict(item['case']);package=case.pop('package',None)
+    if package and case.get('app_id') and case['app_id']!=package:
+        raise ValueError('Case sets both package and app_id with different values.')
+    if package and not case.get('app_id'):case['app_id']=package
+    return {**item,'case':case}
+
+
 def _author_cases(workspace_id, items, dry_run=False):
     uuid.UUID(workspace_id)
     if not isinstance(items,list) or not 1 <= len(items) <= 100:
         raise ValueError('Provide 1–100 definitions with per-item request UUIDs.')
+    items=[_normalize_case_item(item) for item in items]
     return _library_dashboard().request('/api/case-authoring', {'workspace_id':workspace_id,'items':items,'dry_run':dry_run,'runner_capabilities':capabilities()})
 
 
