@@ -16,7 +16,17 @@ This is an explicit HTTP proxy, not an automatic hook into every app's traffic.
    `10.0.2.2`; Android USB can use an explicitly configured ADB reverse tunnel.
    Physical iPhones need a reachable local network address: set
    `SCOUT_SANDBOX_HOST` to this Mac's test-network IP in `.env` and restart Scout.
-   `SCOUT_SANDBOX_PORT` is optional. Scout does not change device network settings.
+   `SCOUT_SANDBOX_PORT` is optional. Scout does not change device network settings
+   during runs. For an Android device over USB or an emulator, one explicit command
+   sets up the routing (`adb reverse` plus the global HTTP proxy) and another undoes it:
+   ```sh
+   uv run scout sandbox-routing up --serial SERIAL [--port 8898]
+   uv run scout sandbox-routing status --serial SERIAL
+   uv run scout sandbox-routing down --serial SERIAL
+   ```
+   `--port` adds tunnels for local fixture servers, such as a media server. `down`
+   restores the proxy value saved by `up` and removes only the tunnels `up` created.
+   While routing is up, the device's HTTP traffic works only during sandbox runs.
 5. HTTPS/WSS requires the app to trust the test CA. Certificate pinning, rejection
    of user CAs, or ignoring the system proxy requires a suitable UAT/debug build or
    app-provided proxy configuration. Scout does not disable certificate validation.

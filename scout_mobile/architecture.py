@@ -15,7 +15,7 @@ LAYERS:tuple[tuple[str,str,tuple[str,...]],...]=(
     ('intelligence','Model-backed judgment: operation choice, checkpoint and starting-condition evaluation.',
      ('model','checkpoints','starting_conditions','platform_comparison')),
     ('runtime_services','Run-time side services the engine can start: network sandbox and recording.',
-     ('sandbox','sandbox_recording','sandbox_addon','sandbox_recording_addon','sandbox_worker','sandbox_variants','run_analysis')),
+     ('sandbox','sandbox_routing','sandbox_recording','sandbox_addon','sandbox_recording_addon','sandbox_worker','sandbox_variants','run_analysis')),
     ('engine','Run orchestration: the node pipeline, the run session, leases, lifecycle, capabilities.',
      ('engine','agent','execution_runtime','lifecycle','device_lease','capabilities')),
     ('application','Job and session management, dashboard sync.',

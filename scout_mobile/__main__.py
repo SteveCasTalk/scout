@@ -13,7 +13,29 @@ from .branding import PRODUCT_NAME
 from .execution_contract import decode_export
 from contextlib import nullcontext
 
+def sandbox_routing(argv:list[str])->int:
+    """`scout sandbox-routing up|down|status --serial S [--port 8898 ...]`: explicit device routing."""
+    from .sandbox_routing import RoutingError, down, status, up
+    parser=argparse.ArgumentParser(prog='scout sandbox-routing',description='Route an Android device through the Scout sandbox proxy (adb reverse + global HTTP proxy), or undo it.')
+    parser.add_argument('action',choices=['up','down','status'])
+    parser.add_argument('--serial',required=True)
+    parser.add_argument('--port',type=int,action='append',default=[],help='Extra host port to adb-reverse, e.g. a local media server (repeatable; up only)')
+    parser.add_argument('--adb',default=getenv('ADB_PATH') or 'adb')
+    args=parser.parse_args(argv)
+    try:
+        result=up(args.serial,args.port,args.adb) if args.action=='up' else down(args.serial,args.adb) if args.action=='down' else status(args.serial,args.adb)
+    except RoutingError as exc:
+        print(f'Sandbox routing error: {exc}')
+        return 2
+    print(json.dumps(result,indent=2))
+    if args.action=='up':print('Device HTTP traffic now only works during sandbox runs. Undo with: scout sandbox-routing down --serial '+args.serial)
+    return 0
+
 def main()->int:
+    import sys
+    if sys.argv[1:2]==['sandbox-routing']:
+        load_local_env()
+        return sandbox_routing(sys.argv[2:])
     parser=argparse.ArgumentParser(description=f'{PRODUCT_NAME} mobile test runner')
     parser.add_argument('run',nargs='?',default='run',choices=['run','nodes'],help='run a test (default) or list the run pipeline nodes')
     parser.add_argument('--case',type=Path,help='Exported dashboard test-case JSON')

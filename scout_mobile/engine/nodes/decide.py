@@ -8,6 +8,7 @@ agent as long as the replacement sets ``decision``, ``op``, ``selected``, ``publ
 from __future__ import annotations
 import json
 import time
+from ... import model
 from ..node import Node, RunContext
 
 
@@ -22,9 +23,22 @@ class JevDecision(Node):
         goal=ctx.goal
         if agent.checkpoints:
             goal+='\nVerification checkpoints: '+json.dumps([{'id':item['id'],'expected':item['expected'],'scope':item['scope'],'required':item['required'],'verdict':item['verdict']} for item in agent.checkpoint_verdicts.values()],ensure_ascii=False)+'\nDo not revisit already satisfied during_run checkpoints. Final checkpoints are assessed when you declare DONE; finish navigation at their intended screen. Unknown verification is not permission to repeat completed actions.'
-        ctx.decision=agent.decide(screen.elements,ctx.public['text'],goal,agent.history,platform=agent.platform)
+        ctx.decision=self.choose(agent,screen.elements,ctx.public['text'],goal,agent.history,platform=agent.platform)
         ctx.op=ctx.decision['operation']
         ctx.selected=next((e for e in screen.elements if e.index==ctx.decision['target']),None)
+
+    def choose(self,agent,*args,**kwargs):
+        return agent.decide(*args,**kwargs)
+
+
+class LLMDecision(JevDecision):
+    """Same options, rules and guards as Jev; a general chat LLM (TEXT_MODEL) makes the choice."""
+    summary='Ask a general chat LLM (TEXT_MODEL, or SCOUT_DECISION_MODEL) to choose the operation and target.'
+    def choose(self,agent,*args,**kwargs):
+        return model.choose_llm(*args,**kwargs)
+
+
+DECISION_AGENTS={'jev':JevDecision,'llm':LLMDecision}
 
 
 class RecordDecision(Node):

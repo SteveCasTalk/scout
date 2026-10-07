@@ -47,9 +47,8 @@ def validate_choice(answer:dict[str,Any],keys:set[str])->str:
     if not valid:raise ModelError('Invalid TypeSafe choice; no action executed.')
     return choice
 
-def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,Any]],platform:str='Android')->dict[str,Any]:
-    key=getenv('TYPESAFE_API_KEY')
-    if not key:raise ModelError('TYPESAFE_API_KEY is missing from local .env.')
+def decision_options(elements:list[Element],page_text:str,goal:str,history:list[dict[str,Any]],platform:str='Android')->tuple[dict[str,str],dict[str,dict[str,Element]],dict[str,Any],list[dict[str,Any]]]:
+    """Operations, candidate targets, choice questions and recent actions offered to any decision model."""
     targets={op:{e.index:e for e in elements if op in e.operations and (op!='TYPE_TEXT' or not e.value or e.class_name.startswith('XCUIElementType'))} for op in ('TAP','TYPE_TEXT','SET_VALUE')}
     operations={op:description for op,description in [('TAP','Tap an observed control.'),('TYPE_TEXT','Fill an observed editable field.'),('SET_VALUE','Set an observed picker to an explicit user-provided value, or a slider to a user-provided normalized position from 0 to 1. Never guess a date or value.')] if targets[op]}
     tutorial_visible=bool(SWIPE_INSTRUCTION.search(page_text))
@@ -73,6 +72,12 @@ def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,A
         if candidates and op in operations:
             questions[op.lower()+'_target']={'type':'choice','criteria':{index:{'element':f'[{index}] {e.label}','role':e.role,'resource_id':e.resource_id,'current_value':'<redacted>' if e.sensitive and e.value else e.value,'checked':e.checked if e.checkable else None,'checkable':e.checkable,'focused':e.focused} for index,e in candidates.items()},'instructions':{'goal':goal,'operation':op,'rules':[POLICY,TARGET_POLICY]}}
     recent_actions=[{k:entry[k] for k in ('step','operation','label','elapsed_ms','page_changed') if k in entry} for entry in history[-10:]]
+    return operations,targets,questions,recent_actions
+
+def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,Any]],platform:str='Android')->dict[str,Any]:
+    key=getenv('TYPESAFE_API_KEY')
+    if not key:raise ModelError('TYPESAFE_API_KEY is missing from local .env.')
+    operations,targets,questions,recent_actions=decision_options(elements,page_text,goal,history,platform)
     body={'model':getenv('TYPESAFE_MODEL','jev-latest'),'state':{'page':{'url':platform.lower()+'://device','title':'mobile app','text':page_text},'elements':[e.public() for e in elements],'recent_actions':recent_actions},'questions':questions}
     started=time.perf_counter()
     result=post_json('https://api.typesafe.ai/v1/systemone',key,body)
@@ -84,6 +89,33 @@ def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,A
     answer_output={name:{k:answer[k] for k in ('choice','confidence','probabilities') if k in answer} for name,answer in answers.items() if name in questions and isinstance(answer,dict)}
     jev={'request':body,'response':{'model':result.get('model'),'answers':answer_output,'usage':result.get('usage',{})},'latency_ms':round((time.perf_counter()-started)*1000)}
     return {'operation':operation,'target':target,'confidence':answers['operation']['confidence'],'model':result.get('model'),'latency_ms':jev['latency_ms'],'usage':result.get('usage',{}),'jev':jev}
+
+LLM_DECISION_FORMAT='Return a JSON object with exactly these keys: "operation" (one key from operations), "target" (one key from that operation\'s candidate targets, or null when the operation has no targets), "confidence" (number from 0 to 1).'
+
+def choose_llm(elements:list[Element],page_text:str,goal:str,history:list[dict[str,Any]],platform:str='Android')->dict[str,Any]:
+    """The same decision as choose(), made by a general chat-completion LLM (TEXT_MODEL) instead of Jev."""
+    key=getenv('TEXT_MODEL_API_KEY')
+    if not key:raise ModelError('The LLM decision agent needs TEXT_MODEL_API_KEY in local .env.')
+    base=getenv('SCOUT_DECISION_MODEL_BASE_URL') or getenv('TEXT_MODEL_BASE_URL','https://api.deepseek.com/v1')
+    model=getenv('SCOUT_DECISION_MODEL') or getenv('TEXT_MODEL','deepseek-chat')
+    operations,targets,questions,recent_actions=decision_options(elements,page_text,goal,history,platform)
+    candidates={op.lower()+'_targets':question['criteria'] for op,question in ((name.removesuffix('_target').upper(),value) for name,value in questions.items() if name.endswith('_target'))}
+    prompt={'goal':goal,'operations':operations,**candidates,'page_text':page_text,'recent_actions':recent_actions}
+    body={'model':model,'max_tokens':200,'temperature':0,'response_format':{'type':'json_object'},'messages':[{'role':'system','content':POLICY+' '+TARGET_POLICY+' '+LLM_DECISION_FORMAT},{'role':'user','content':json.dumps(prompt,ensure_ascii=False)}]}
+    started=time.perf_counter()
+    result=post_json(base.rstrip('/')+'/chat/completions',key,body)
+    latency_ms=round((time.perf_counter()-started)*1000)
+    try:
+        answer=json.loads(result['choices'][0]['message']['content'])
+        operation=answer['operation'];target=answer.get('target');confidence=float(answer.get('confidence',0))
+        if operation not in operations or not math.isfinite(confidence) or not 0<=confidence<=1:raise ValueError()
+        if operation in targets:
+            target=str(target)
+            if target not in targets[operation]:raise ValueError()
+        else:target=None
+    except (KeyError,IndexError,TypeError,ValueError):raise ModelError('LLM decision was not a valid operation/target choice; no action executed.') from None
+    audit={'request':body,'response':{'model':result.get('model',model),'answers':{'operation':{'choice':operation,'confidence':confidence},'target':target},'usage':result.get('usage',{})},'latency_ms':latency_ms,'agent':'llm'}
+    return {'operation':operation,'target':target,'confidence':confidence,'model':result.get('model',model),'latency_ms':latency_ms,'usage':result.get('usage',{}),'jev':audit}
 
 def field_text(goal:str,field:Element,page_text:str,history:list[dict[str,Any]])->str:
     key=getenv('TEXT_MODEL_API_KEY')

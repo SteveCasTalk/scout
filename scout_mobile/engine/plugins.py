@@ -7,6 +7,7 @@ for example ``pipeline.insert(MyNode(), after='settle')`` or
   * the ``scout.pipeline`` entry-point group of installed packages
   * ``SCOUT_PIPELINE_PLUGINS``: comma-separated ``module:callable`` references
 
+``SCOUT_DECISION_AGENT`` picks the built-in decision agent (``jev`` default, or ``llm``).
 ``SCOUT_DISABLED_NODES`` removes unlocked nodes by name. Locked nodes enforce safety
 or resource ownership and refuse removal or replacement. Plugin errors fail closed.
 """
@@ -16,6 +17,7 @@ from importlib.metadata import entry_points
 from typing import Callable
 from ..config import getenv
 from .nodes import DEFAULT_NODES
+from .nodes.decide import DECISION_AGENTS
 from .pipeline import Pipeline, PipelineError
 
 ENTRY_POINT_GROUP='scout.pipeline'
@@ -53,6 +55,9 @@ def build_pipeline(plugins:list[tuple[str,Plugin]]|None=None)->Pipeline:
         if not callable(plugin):raise PipelineError(f'Pipeline plugin {label} is not callable.')
         try:plugin(pipeline)
         except PipelineError as exc:raise PipelineError(f'Pipeline plugin {label}: {exc}') from None
+    agent=(getenv('SCOUT_DECISION_AGENT') or 'jev').strip().lower()
+    if agent not in DECISION_AGENTS:raise PipelineError(f'SCOUT_DECISION_AGENT must be one of {", ".join(DECISION_AGENTS)}.')
+    if agent!='jev':pipeline.replace('decide',DECISION_AGENTS[agent]())
     for name in (getenv('SCOUT_DISABLED_NODES') or '').split(','):
         if name.strip():pipeline.remove(name.strip())
     pipeline.validate()
