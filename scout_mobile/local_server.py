@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .agent import Agent, RunConfig
 from . import dashboard_jobs
 from .evidence import inventory as evidence_inventory, allowed as evidence_allowed
-from .config import ROOT, load_local_env, getenv, default_backend
+from .config import ROOT, load_local_env, getenv
 from .devices import connected
 from .branding import PRODUCT_NAME
 from .capabilities import capabilities, negotiate_case
@@ -77,7 +77,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/health":
             # `root` lets clients detect a bridge started from another Scout checkout (different sandbox CA and outputs).
-            self._json(200, {"status": "ready", "capabilities": capabilities("Android",default_backend("Android")), "run_lock_held": RUN_LOCK.locked(), "root": str(ROOT)})
+            self._json(200, {"status": "ready", "capabilities": capabilities("Android",getenv("SCOUT_ANDROID_DRIVER") or "appium"), "run_lock_held": RUN_LOCK.locked(), "root": str(ROOT)})
             return
         session_match = re.fullmatch(r'/library-sessions/([A-Za-z0-9_-]{1,80})',parsed.path)
         if session_match:
@@ -280,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "max_steps must be between 1 and 100."})
                 return
 
-            execution=check_support(case,case.get("platform","Android"),default_backend(case.get("platform","Android")))
+            execution=check_support(case,case.get("platform","Android"),getenv("SCOUT_ANDROID_DRIVER") or "appium")
             negotiate_case(case,execution,payload.get("client_capabilities"))
             grants=validate_authorizations(payload.get("authorizations"),execution)
             adb = getenv("ADB_PATH") or "adb"

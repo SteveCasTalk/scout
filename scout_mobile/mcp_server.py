@@ -24,7 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
 
 from .agent import Agent, RunConfig
-from .config import ROOT, load_local_env, getenv, default_backend
+from .config import ROOT, load_local_env, getenv
 from .dashboard_runtime import ensure_dashboard
 from .device import AndroidDevice
 from .devices import connected
@@ -561,9 +561,9 @@ _LIBRARY_CLIENT_LOCK = RLock()
 
 
 @mcp.tool()
-def get_runner_capabilities(platform: Literal['Android','iOS'] = 'Android', backend: Literal['appium','adb'] | None = None) -> dict[str, Any]:
-    """Read this loaded MCP runner's build and supported opt-in contracts. Backend defaults to adb on Android and appium on iOS. Does not operate a device."""
-    return capabilities(platform, backend or default_backend(platform))
+def get_runner_capabilities(platform: Literal['Android','iOS'] = 'Android', backend: Literal['appium','adb'] = 'appium') -> dict[str, Any]:
+    """Read this loaded MCP runner's build and supported opt-in contracts. Does not operate a device."""
+    return capabilities(platform, backend)
 
 
 @mcp.tool()
