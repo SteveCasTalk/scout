@@ -48,5 +48,15 @@ assert imported['source']=='Prompt run' and imported['trace'][0]['operation']=='
 assert next(x for x in call('/api/runs') if x['id']==imported['id'])['trace'][0]['screenshot']=='000.png'
 stored_prompt=next(x for x in call('/api/runs') if x['id']==imported['id'])
 assert stored_prompt['snapshot']['project']=='Arcana' and stored_prompt['snapshot']['app_id']=='com.example.arcana' and stored_prompt['external_run_id']==external_run_id
-print('PASS: create/project grouping, validation, revision conflict, immutable run snapshot, stale-run rejection, evidence upload/read/range, list persistence, cross-origin rejection, anonymous rejection, prompt-run trace and deduplication.')
+doomed=call('/api/cases',{**c,'title':'[Dashboard verification] Delete me'},'POST',201)
+doomed_run=call('/api/runs',{'caseId':doomed['id'],'revision':1,'status':'Inconclusive','build':'synthetic-1','device':'No device — dashboard check','notes':'Synthetic delete check.'},'POST',201)
+call('/api/notes',{'target_type':'case','target_id':doomed['id'],'body':'Synthetic delete check.'},'POST',201)
+deletion={'id':doomed['id'],'workspace_id':workspace['id'],'revision':1}
+call('/api/cases',{**deletion,'revision':2},'DELETE',409)
+call('/api/cases',deletion,'DELETE',403,headers={'Origin':'https://unrelated.example'})
+assert call('/api/cases',deletion,'DELETE')=={'deleted':True,'id':doomed['id']}
+call('/api/cases',deletion,'DELETE',404)
+assert not any(x['id']==doomed['id'] for x in call('/api/cases')) and not any(x['id']==doomed_run['id'] for x in call('/api/runs'))
+assert not any(x['target_id']==doomed['id'] for x in call('/api/notes?workspace='+workspace['id']))
+print('PASS: create/project grouping, validation, revision conflict, immutable run snapshot, stale-run rejection, evidence upload/read/range, list persistence, cross-origin rejection, anonymous rejection, prompt-run trace and deduplication, case deletion (stale revision, cross-origin, cascade, repeat 404).')
 print(json.dumps({'caseId':created['id'],'runId':r['id'],'evidenceId':e['id']}))

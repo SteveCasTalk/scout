@@ -621,6 +621,19 @@ def update_test_case(workspace_id: str, case_id: str, expected_revision: int, de
 
 
 @mcp.tool()
+def delete_test_case(workspace_id: str, case_id: str, expected_revision: int) -> dict[str, Any]:
+    """PERMANENTLY delete a saved test case. Call only when the user explicitly asked
+    to delete this specific case; never to tidy up, replace, or retry. Also deletes all
+    of its revisions, runs, evidence files, review notes, checkpoint reviews, platform
+    comparisons that used its runs, scenario matrices, matrix batches and authoring
+    request records. There is no undo; export the case first if it may be needed.
+    expected_revision must be the revision from get_test_case: a changed case returns
+    a conflict and nothing is deleted. Returns {deleted: true, id}. Never executes.
+    """
+    return _library_dashboard().delete_test_case(workspace_id, case_id, expected_revision)
+
+
+@mcp.tool()
 def import_test_cases(workspace_id: str, items: list[dict[str, Any]], dry_run: bool = True) -> dict[str, Any]:
     """Validate or save up to 100 items independently. Each has request_id/case, plus id/expected_revision for updates. Per-item errors and partial success are explicit; no execution side effect."""
     return _author_cases(workspace_id,items,dry_run)

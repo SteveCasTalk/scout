@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ArrowUpRight, ChevronDown, Download, FileText, Film, Image as ImageIcon, Layers, Pencil, Play, Workflow } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, Download, FileText, Film, Image as ImageIcon, Layers, Pencil, Play, Trash2, Workflow } from 'lucide-react';
 import { CheckpointReport } from './checkpoints';
 import { NotesPanel } from './run-diagnostics';
 import { StartingConditionsReport } from './starting-conditions';
@@ -25,6 +25,7 @@ type Props = {
     saving: boolean;
     projectName: (test: TestCase) => string;
     onEdit: (test: TestCase) => void;
+    onDelete: (test: TestCase) => void;
     onExport: (test: TestCase) => void;
     onRun: (test: TestCase) => void;
     onMatrix: (test: TestCase) => void;
@@ -78,7 +79,7 @@ export function TestCaseLibrary(props: Props) {
                 {visible.filter(row => props.projectName(row.test) === project && groupKey(row.test) === ticket).map(({ test, runs, latest, files }) => <details className="studio-case-row" key={test.id}>
                     <summary><span className="case-row-name">{organizing && <input type="checkbox" aria-label={`Select ${test.title}`} checked={selected.includes(test.id)} disabled={busy} onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()} onChange={event => setSelected(old => event.target.checked ? [...old, test.id] : old.filter(id => id !== test.id))}/>}<ChevronDown size={15} className="case-expand"/><FileText size={17}/><span><b>{test.title}</b><small>{test.platform} · {grouping === 'suite' ? ticketKey(test) : test.suite} · v{test.revision}</small></span></span><Outcome run={latest}/><span className="case-last-run">{latest ? date(latest.created) : 'Not run yet'}{latest?.snapshot.matrix&&<small>Scenario: {latest.snapshot.matrix.variant_label}</small>}<small>{runs.length} {runs.length === 1 ? 'run' : 'runs'}</small></span><span className="case-evidence-count"><ImageIcon size={13}/>{files.filter(file => file.mime.startsWith('image/')).length}<Film size={13}/>{files.filter(file => file.mime.startsWith('video/')).length}</span></summary>
                     <div className="studio-case-expanded">
-                        <div className="case-actions"><Button size="sm" variant="outline" onClick={() => props.onEdit(test)}><Pencil size={13}/>Edit case</Button><Button size="sm" variant="ghost" onClick={() => props.onExport(test)}><Download size={13}/>Export</Button><Button size="sm" variant="ghost" onClick={() => props.onCanvas(test)}><Workflow size={13}/>Canvas</Button><Button size="sm" variant="outline" onClick={() => props.onMatrix(test)}>Scenario matrix</Button><span className="case-action-spacer"/><Button size="sm" variant="outline" onClick={() => props.onRecord(test)}>Record run</Button>{['Android', 'iOS'].includes(test.platform) && <Button size="sm" onClick={() => props.onRun(test)} disabled={!props.runnerReady || !!props.runningCaseId || props.saving} title={!props.runnerReady ? 'Connect the local runner to execute this case' : undefined}><Play size={13}/>{props.runningCaseId === test.id ? 'Running…' : 'Run'}</Button>}</div>
+                        <div className="case-actions"><Button size="sm" variant="outline" onClick={() => props.onEdit(test)}><Pencil size={13}/>Edit case</Button><Button size="sm" variant="ghost" onClick={() => props.onExport(test)}><Download size={13}/>Export</Button><Button size="sm" variant="ghost" onClick={() => props.onCanvas(test)}><Workflow size={13}/>Canvas</Button><Button size="sm" variant="outline" onClick={() => props.onMatrix(test)}>Scenario matrix</Button><Button size="sm" variant="ghost" onClick={() => props.onDelete(test)} disabled={busy} aria-label={`Delete test case ${test.title}`}><Trash2 size={13} aria-hidden="true"/>Delete test case</Button><span className="case-action-spacer"/><Button size="sm" variant="outline" onClick={() => props.onRecord(test)}>Record run</Button>{['Android', 'iOS'].includes(test.platform) && <Button size="sm" onClick={() => props.onRun(test)} disabled={!props.runnerReady || !!props.runningCaseId || props.saving} title={!props.runnerReady ? 'Connect the local runner to execute this case' : undefined}><Play size={13}/>{props.runningCaseId === test.id ? 'Running…' : 'Run'}</Button>}</div>
                         <div className="case-definition"><section><h4>Goal</h4><p>{test.goal}</p><h4>Expected result</h4><p>{test.expected}</p></section><section><h4>Steps</h4><ol>{test.steps.split('\n').filter(Boolean).map((step, index) => <li key={index}>{step}</li>)}</ol>{test.preconditions && <><h4>Preconditions</h4><p>{test.preconditions}</p></>}</section></div>
                         <StartingConditionsReport defined={test.starting_conditions}/><CheckpointReport definitions={test.checkpoints}/><NotesPanel targetType="case" targetId={test.id} notes={props.notes} onCreate={props.onCreateNote} onUpdate={props.onUpdateNote} onDelete={props.onDeleteNote}/><div className="case-history-heading"><h4>Run history</h4><span>{runs.length} runs · {files.length} evidence files</span></div>
                         {runs.length ? runs.map(run => {

@@ -74,6 +74,18 @@ class DashboardClient:
     def library(self, **params):
         return self.request('/api/library?'+urlencode({k:v for k,v in params.items() if v is not None}))
 
+    def delete_test_case(self, workspace_id: str, case_id: str, expected_revision: int) -> dict:
+        """Permanently delete a saved case and everything that belongs only to it.
+
+        Removes its revisions, runs, evidence files, notes, checkpoint reviews, platform
+        comparisons, scenario matrices, matrix batches and authoring records. The
+        dashboard answers 409 when the case revision changed and 404 when not found.
+        """
+        workspace_id, case_id = str(uuid.UUID(workspace_id)), str(uuid.UUID(case_id))
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 1:
+            raise ValueError('expected_revision must be the positive revision you last read.')
+        return self.request('/api/cases', {'id': case_id, 'workspace_id': workspace_id, 'revision': expected_revision}, method='DELETE')
+
     def upload(self, run_id: str, path: Path):
         if not path.stat().st_size or path.stat().st_size > 25*1024*1024:
             raise ValueError('Evidence files must be nonempty and at most 25 MB.')

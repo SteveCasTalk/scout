@@ -407,6 +407,19 @@ payload returns the original response; changed payload conflicts. Updates check
 revision and ownership. Partial errors are explicit. Dry runs reserve nothing;
 authoring never executes a device action.
 
+`delete_test_case(workspace_id, case_id, expected_revision)` permanently deletes a
+saved case. Call it only when the user explicitly asked to delete that case. It
+also removes everything that only belongs to the case: retained revisions, its runs
+(including scenario-matrix runs) with their evidence rows and stored evidence files,
+case and run review notes, checkpoint reviews, platform comparisons (and their
+reviews) that used one of its runs, scenario matrices, matrix batches, and
+`create_test_case`/`update_test_case` request records for it, so a replayed
+`request_id` is no longer deduplicated. `expected_revision` must match the current
+revision from `get_test_case`; a changed case returns a conflict and nothing is
+deleted. There is no undo; export the case first if it may be needed. The
+dashboard exposes the same operation as `DELETE /api/cases` with
+`{id, workspace_id, revision}` and a "Delete test case" action with confirmation.
+
 New definitions export in `{"format":"scout-case-v2","case":...}`; legacy cases
 remain flat. Baseline loaders reject the envelope before device inventory. New
 server freeze/edit/import/run paths require capable clients; old clients can still
