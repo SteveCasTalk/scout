@@ -12,12 +12,6 @@ def getenv(name: str, default: str | None = None) -> str | None:
     legacy = name.replace('SCOUT_', 'JEV_', 1) if name.startswith('SCOUT_') else name
     return os.environ.get(legacy, default)
 
-def default_backend(platform: str = 'Android') -> str:
-    """Android defaults to native ADB; iOS always uses Appium/XCUITest."""
-    if platform == 'iOS':
-        return 'appium'
-    return getenv('SCOUT_ANDROID_DRIVER') or 'adb'
-
 def load_local_env(path: Path | None = None) -> None:
     path = path or ROOT / '.env'
     if not path.exists():

@@ -1,8 +1,7 @@
 # Appium Android setup and measurements
 
-Native ADB is the default Android backend. Appium/UiAutomator2 is an opt-in
-Android backend through `--driver appium` or `SCOUT_ANDROID_DRIVER=appium`, and
-is required for cases that declare `tap_burst` or `target_gestures`. Appium handles hierarchy observations, screenshots, app
+Appium is the default Android backend. The previous ADB execution backend
+remains available through `--driver adb` or `SCOUT_ANDROID_DRIVER=adb`. Appium handles hierarchy observations, screenshots, app
 activation, foreground app lookup, taps, text, swipes, and Back. Android device
 discovery, installation checks, metadata, logs, prompt settings, and recording
 still use ADB. iOS uses the shared runner through XCUITest; see [iOS setup and limitations](ios-appium.md). Measurements below describe the original Android trial.
@@ -40,10 +39,10 @@ Do not enable debug logging while entering credentials.
 .venv/bin/python -m scout_mobile --driver appium --case /path/to/case.json --package com.example.uat --serial DEVICE_SERIAL
 ```
 
-Defaults are `SCOUT_ANDROID_DRIVER=adb` and
+Defaults are `SCOUT_ANDROID_DRIVER=appium` and
 `SCOUT_APPIUM_URL=http://127.0.0.1:4723`; local `.env` values can override them. Restart the MCP
 server and dashboard bridge using the virtual environment. All Agent entrypoints
-use that setting. CLI `--driver appium` or `--driver adb` overrides it; iOS always uses Appium. Old processes must be restarted
+use that setting. CLI `--driver adb` overrides it. Old processes must be restarted
 to load the new implementation. No dashboard backend selector is added yet.
 
 Sessions are opened lazily, use an explicit device serial, preserve application

@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from urllib.parse import urlencode
-from .config import ROOT,getenv,default_backend
+from .config import ROOT,getenv
 from .dashboard_client import DashboardClient, sync_run
 from . import dashboard_jobs
 from .devices import connected
@@ -83,7 +83,7 @@ class Sessions:
         if not isinstance(grants,dict):raise ValueError('Authorizations must be a per-case-ID mapping.')
         if set(grants)-{c['id'] for c in cases}:raise ValueError('Authorizations refer to an unselected case.')
         for c in cases:
-            execution=check_support(c,platform,default_backend(platform))
+            execution=check_support(c,platform,getenv('SCOUT_ANDROID_DRIVER') or 'appium')
             negotiate_case(c,execution,packet.get('client_capabilities'))
             validate_authorizations(grants.get(c['id']),execution)
         serial=packet.get('serial')
@@ -103,7 +103,7 @@ class Sessions:
                                 'continue_on_failure':packet.get('continue_on_failure',False),'conditions_confirmed':True}})
                 cases=matrix['cases']
                 for c in cases:
-                    execution=check_support(c,platform,default_backend(platform))
+                    execution=check_support(c,platform,getenv('SCOUT_ANDROID_DRIVER') or 'appium')
                     negotiate_case(c,execution,packet.get('client_capabilities'));validate_authorizations(grants.get(c['id']),execution)
             session={'session_id':session_id,'workspace_id':packet['workspace_id'],'dashboard_url':client.url,
                      'request_id':request_id,'request_signature':signature,'kind':'matrix' if matrix else 'regression',
@@ -140,7 +140,7 @@ class Sessions:
                         break
                     run_id=dashboard_jobs.start({'case':case,'serial':session['serial'],'start_mode':mode,
                                                 'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,
-                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],default_backend(case['platform'])),'authorizations':session.get('authorizations',{}).get(case['id'])},threading.Lock())
+                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium'),'authorizations':session.get('authorizations',{}).get(case['id'])},threading.Lock())
                     session.update(current_case_index=index,active_run_id=run_id)
                     self.persist(session)
                 self.publish_matrix(session,client)

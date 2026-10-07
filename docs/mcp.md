@@ -9,7 +9,7 @@ Install uv and Python 3.11 or newer, then install the project dependencies once:
     cd /Users/phucnguyen/Documents/ChatGPT/scout
     uv sync
 
-Android runs on native ADB by default, so no Appium server is required for Android. iOS always uses Appium/XCUITest; install it using [iOS setup](ios-appium.md). To opt into Appium/UiAutomator2 on Android (required for cases that declare `tap_burst` or `target_gestures`), follow [Appium setup](appium-trial.md) and set `SCOUT_ANDROID_DRIVER=appium`. The runner starts the installed local Appium server on demand.
+Install the Appium server and UiAutomator2 driver once using [Appium setup](appium-trial.md). The runner starts the installed local server on demand. Appium is the default; set `SCOUT_ANDROID_DRIVER=adb` only to explicitly choose the previous backend.
 
 Copy .env.example to .env if needed and set TYPESAFE_API_KEY. Set SCOUT_TEST_EMAIL and SCOUT_TEST_PASSWORD locally when running authentication tests. To select a non-default ADB executable, set ADB_PATH in .env. MCP host-provided text does not require `TEXT_MODEL_API_KEY`; that key is for standalone runner use. Keep passwords and other credentials in the local credential provider, not in `enter_text`.
 
@@ -299,7 +299,7 @@ semantic API compatibility. Review synthetic data and privacy, then call
 
 ## Opt-in execution and authoring (contract v2)
 
-Read `get_runner_capabilities(platform="Android")` (backend defaults to adb; pass `backend="appium"` to check the opt-in Appium adapter) and
+Read `get_runner_capabilities(platform="Android", backend="appium")` and
 `get_test_case_template` before using new execution fields. Discovery publishes
 contract versions, adapter features, bounded limits and the startup source hash.
 `diagnose_environment(serial=..., package=..., workspace_id=...)` reports dependency
