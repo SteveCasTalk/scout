@@ -650,6 +650,19 @@ def delete_test_case(workspace_id: str, case_id: str, expected_revision: int) ->
 
 
 @mcp.tool()
+def clear_test_runs(workspace_id: str, case_id: str | None = None) -> dict[str, Any]:
+    """PERMANENTLY delete saved run history. Call only when the user explicitly asked
+    to clear runs for this workspace or case; never to tidy up, reset, or retry. Without
+    case_id it clears every run in the workspace; with case_id only that case's runs.
+    Deletes the runs (including scenario-matrix runs), their evidence files, run review
+    notes, checkpoint reviews, platform comparisons that used them, and matrix batches.
+    Keeps the test cases, revisions, scenario matrices and case notes. There is no undo.
+    Returns {deleted_runs, deleted_evidence, deleted_batches}. Never executes.
+    """
+    return _library_dashboard().clear_runs(workspace_id, case_id)
+
+
+@mcp.tool()
 def import_test_cases(workspace_id: str, items: list[dict[str, Any]], dry_run: bool = True) -> dict[str, Any]:
     """Validate or save up to 100 items independently. Each has request_id/case, plus id/expected_revision for updates. Per-item errors and partial success are explicit; no execution side effect."""
     return _author_cases(workspace_id,items,dry_run)

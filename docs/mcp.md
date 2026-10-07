@@ -424,6 +424,20 @@ deleted. There is no undo; export the case first if it may be needed. The
 dashboard exposes the same operation as `DELETE /api/cases` with
 `{id, workspace_id, revision}` and a "Delete test case" action with confirmation.
 
+`clear_test_runs(workspace_id, case_id=None)` permanently deletes saved run history
+while keeping the test cases. Call it only when the user explicitly asked to clear
+runs. Without `case_id` it clears every run in the workspace; with `case_id` only that
+case's runs. It removes the runs (including scenario-matrix runs) with their evidence
+rows and stored evidence files, run review notes, checkpoint reviews, platform
+comparisons (and their reviews) that used one of the runs, and matrix batches. Test
+cases, retained revisions, scenario matrices, case notes and authoring request
+records are kept. It returns `{deleted_runs, deleted_evidence, deleted_batches}`;
+an unknown workspace or case returns not found and nothing is deleted. There is no
+undo. Results still kept by the local runner can be imported again by the
+dashboard's Refresh sync. The dashboard exposes the same operation as
+`DELETE /api/runs` with `{workspace_id, case_id?}`, a workspace-level "Clear run
+history" action and a per-case "Clear runs" action, each with confirmation.
+
 New definitions export in `{"format":"scout-case-v2","case":...}`; legacy cases
 remain flat. Baseline loaders reject the envelope before device inventory. New
 server freeze/edit/import/run paths require capable clients; old clients can still
