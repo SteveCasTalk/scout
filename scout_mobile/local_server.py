@@ -76,7 +76,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200 if job else 404, job or {"error": "Run session not found. The bridge may have restarted."})
             return
         if parsed.path == "/health":
-            self._json(200, {"status": "ready", "capabilities": capabilities("Android",getenv("SCOUT_ANDROID_DRIVER") or "appium"), "run_lock_held": RUN_LOCK.locked()})
+            # `root` lets clients detect a bridge started from another Scout checkout (different sandbox CA and outputs).
+            self._json(200, {"status": "ready", "capabilities": capabilities("Android",getenv("SCOUT_ANDROID_DRIVER") or "appium"), "run_lock_held": RUN_LOCK.locked(), "root": str(ROOT)})
             return
         session_match = re.fullmatch(r'/library-sessions/([A-Za-z0-9_-]{1,80})',parsed.path)
         if session_match:

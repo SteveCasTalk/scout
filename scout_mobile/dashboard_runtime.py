@@ -37,13 +37,27 @@ def _port_available(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) != 0
 
 
-def _bridge_ready() -> bool:
+def _bridge_health() -> dict | None:
     try:
         request = Request("http://127.0.0.1:8765/health", headers={"Origin": "http://127.0.0.1:5173"})
         with urlopen(request, timeout=0.7) as response:
-            return response.status == 200 and b'"ready"' in response.read(256)
-    except (OSError, URLError, TimeoutError):
-        return False
+            health = json.loads(response.read(65536)) if response.status == 200 else None
+            return health if isinstance(health, dict) and health.get("status") == "ready" else None
+    except (OSError, URLError, TimeoutError, ValueError):
+        return None
+
+
+def _foreign_bridge_root(health: dict) -> str | None:
+    """Checkout of a bridge that is not this one; bridges predating the `root` field count as foreign."""
+    root = health.get("root")
+    if root and Path(root).resolve() == ROOT.resolve():
+        return None
+    return root or "an older Scout checkout"
+
+
+def _bridge_ready() -> bool:
+    health = _bridge_health()
+    return health is not None and _foreign_bridge_root(health) is None
 
 
 def _start_process(key: str, command: list[str], cwd: Path, env: dict[str, str], log_path: Path) -> None:
@@ -128,8 +142,14 @@ def ensure_dashboard() -> tuple[str, str | None]:
 
 
 def _ensure_bridge() -> str | None:
-    if _bridge_ready():
-        return None
+    health = _bridge_health()
+    if health is not None:
+        foreign = _foreign_bridge_root(health)
+        if foreign is None:
+            return None
+        # Reusing it would silently apply that checkout's sandbox CA, recordings and run outputs.
+        return (f"The Scout bridge on port 8765 belongs to {foreign}, not {ROOT}. "
+                "Stop that bridge (python -m scout_mobile.local_server) and retry.")
     if not _port_available(8765):
         return "The local Scout bridge port 8765 is occupied but did not answer its health check."
     try:

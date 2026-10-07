@@ -9,7 +9,7 @@ Install uv and Python 3.11 or newer, then install the project dependencies once:
     cd /Users/phucnguyen/Documents/ChatGPT/scout
     uv sync
 
-Install the Appium server and UiAutomator2 driver once using [Appium setup](appium-trial.md). The runner starts the installed local server on demand. Appium is the default; set `SCOUT_ANDROID_DRIVER=adb` only to explicitly choose the previous backend.
+Install the Appium server and UiAutomator2 driver once using [Appium setup](appium-trial.md). The runner starts the installed local server on demand. Appium is the default; set `SCOUT_ANDROID_DRIVER=adb` only to explicitly choose the native ADB backend. The ADB backend supports `target_gestures` swipes but not `tap_burst` or `DRAG`, and `uiautomator dump` cannot observe continuously animating screens (Appium with `SCOUT_APPIUM_IDLE_TIMEOUT_MS=0` can).
 
 Copy .env.example to .env if needed and set TYPESAFE_API_KEY. Set SCOUT_TEST_EMAIL and SCOUT_TEST_PASSWORD locally when running authentication tests. To select a non-default ADB executable, set ADB_PATH in .env. MCP host-provided text does not require `TEXT_MODEL_API_KEY`; that key is for standalone runner use. Keep passwords and other credentials in the local credential provider, not in `enter_text`.
 
@@ -406,6 +406,19 @@ and `case`; updates also include `id` and `expected_revision`. Same request and
 payload returns the original response; changed payload conflicts. Updates check
 revision and ownership. Partial errors are explicit. Dry runs reserve nothing;
 authoring never executes a device action.
+
+`delete_test_case(workspace_id, case_id, expected_revision)` permanently deletes a
+saved case. Call it only when the user explicitly asked to delete that case. It
+also removes everything that only belongs to the case: retained revisions, its runs
+(including scenario-matrix runs) with their evidence rows and stored evidence files,
+case and run review notes, checkpoint reviews, platform comparisons (and their
+reviews) that used one of its runs, scenario matrices, matrix batches, and
+`create_test_case`/`update_test_case` request records for it, so a replayed
+`request_id` is no longer deduplicated. `expected_revision` must match the current
+revision from `get_test_case`; a changed case returns a conflict and nothing is
+deleted. There is no undo; export the case first if it may be needed. The
+dashboard exposes the same operation as `DELETE /api/cases` with
+`{id, workspace_id, revision}` and a "Delete test case" action with confirmation.
 
 New definitions export in `{"format":"scout-case-v2","case":...}`; legacy cases
 remain flat. Baseline loaders reject the envelope before device inventory. New

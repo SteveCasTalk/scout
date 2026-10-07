@@ -1,7 +1,8 @@
-import { context, failure, jsonBody, HttpError } from '@/lib/server';
+import { context, failure, jsonBody, HttpError, bucket } from '@/lib/server';
 import { caseInput, startingConditionsInput } from '@/lib/contracts';
 import { z } from 'zod';
 import { decodeCase, retainRevision } from '@/lib/case-record';
+import { caseDeletionPlan } from '@/lib/case-delete';
 export async function GET(request: Request) { try {
     const { db, owner } = await context(request);
     const rows = await db.prepare('SELECT id,workspace_id,project,ticket_key,comparison_key,sandbox_json,execution_json,app_id,title,platform,suite,goal,preconditions,steps,expected,assertion_text,checkpoints_json,starting_conditions_json,revision,updated FROM test_cases WHERE owner=? ORDER BY updated DESC').bind(owner).all();
@@ -38,6 +39,33 @@ export async function PUT(request: Request) { try {
     if (!result.meta.changes)
         throw new HttpError(409, 'This test changed elsewhere. Reload the library before editing again.');
     return Response.json({ ...c, revision: c.revision + 1, updated });
+}
+catch (e) {
+    return failure(e);
+} }
+const deleteInput = z.object({ id: z.string().uuid(), workspace_id: z.string().uuid(), revision: z.number().int().positive() });
+// Permanently removes a case with its revisions, runs, evidence, notes, reviews,
+// platform comparisons, scenario matrices, matrix batches and authoring records.
+export async function DELETE(request: Request) { try {
+    const { db, owner } = await context(request, true);
+    const p = deleteInput.parse(await jsonBody(request));
+    const current = await db.prepare('SELECT revision FROM test_cases WHERE id=? AND owner=? AND workspace_id=?').bind(p.id, owner, p.workspace_id).first<{ revision: number }>();
+    if (!current) throw new HttpError(404, 'Test case not found.');
+    if (Number(current.revision) !== p.revision) throw new HttpError(409, 'This test changed elsewhere. Reload the library before deleting it.');
+    // Refuse before touching D1 when evidence blobs exist but storage is unbound, so a
+    // delete never strands unreferenced R2 objects because of missing configuration.
+    const files = await db.prepare('SELECT COUNT(*) AS n FROM evidence WHERE owner=? AND run_id IN (SELECT id FROM runs WHERE owner=? AND case_id=?)').bind(owner, owner, p.id).first<{ n: number }>();
+    const storage = Number(files?.n) > 0 ? bucket() : null;
+    const results = await db.batch(caseDeletionPlan({ owner, workspaceId: p.workspace_id, caseId: p.id, revision: p.revision }).map(s => db.prepare(s.sql).bind(...s.binds)));
+    if (!results.at(-1)?.meta.changes) throw new HttpError(409, 'This test changed elsewhere. Reload the library before deleting it.');
+    const keys = (results[0].results as { object_key: string }[]).map(row => String(row.object_key));
+    if (keys.length) {
+        // R2 is not part of the D1 transaction; the rows are already gone, so a failed blob
+        // delete only leaves unreferenced objects. Report it without failing the request.
+        try { const store = storage || bucket(); for (let i = 0; i < keys.length; i += 1000) await store.delete(keys.slice(i, i + 1000)); }
+        catch (error) { console.error('Deleted test case evidence objects could not be removed', { caseId: p.id, count: keys.length }, error); }
+    }
+    return Response.json({ deleted: true, id: p.id });
 }
 catch (e) {
     return failure(e);

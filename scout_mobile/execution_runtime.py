@@ -20,23 +20,35 @@ def locate(screen, selector, tap=False):
     try:root=ET.fromstring(screen.xml)
     except ET.ParseError:raise ExecutionBlocked('Invalid hierarchy; target cannot be grounded.') from None
     matches=[]
-    def visit(node, visible=True):
+    def element(a,label,rect,actionable):
+        cls=a.get('class','')
+        return Element('typed','textbox' if 'EditText' in cls else 'control',label,a.get('resource-id',''),cls,'',rect,('TAP',) if actionable else (),False,password=a.get('password')=='true')
+    def onscreen(a):
+        b=BOUNDS.fullmatch(a.get('bounds',''))
+        if not b:return None
+        rect=tuple(map(int,b.groups()))
+        return rect if 0<=rect[0]<rect[2]<=screen.width and 0<=rect[1]<rect[3]<=screen.height else None
+    def visit(node, visible=True, clickable_parent=None):
         a=node.attrib
         visible=visible and a.get('displayed','true')!='false' and a.get('enabled','true')!='false'
         label=a.get('text','').strip() or a.get('content-desc','').strip()
         cls=a.get('class',node.tag)
+        actionable=a.get('clickable')=='true' or a.get('checkable')=='true'
         if visible and all(not selector[k] or selector[k]==v for k,v in [('resource_id',a.get('resource-id','')),('text',label),('class_name',cls)]):
-            b=BOUNDS.fullmatch(a.get('bounds',''))
-            if b:
-                rect=tuple(map(int,b.groups()))
-                if 0<=rect[0]<rect[2]<=screen.width and 0<=rect[1]<rect[3]<=screen.height:
-                    actionable=a.get('clickable')=='true' or a.get('checkable')=='true'
-                    if not tap or actionable:
-                        matches.append(Element('typed','textbox' if 'EditText' in cls else 'control',label,a.get('resource-id',''),cls,'',rect,('TAP',) if actionable else (),False,password=a.get('password')=='true'))
-        for child in node:visit(child,visible)
+            rect=onscreen(a)
+            if rect:
+                if not tap or actionable:
+                    matches.append(element(a,label,rect,actionable))
+                elif selector['text'] and not selector['resource_id'] and clickable_parent is not None:
+                    # Observations label a clickable container with its child's text (e.g. a Button wrapping
+                    # Text). Resolve that exact text to the container it labels; ambiguity is still rejected.
+                    parent=clickable_parent.attrib;parent_rect=onscreen(parent)
+                    if parent_rect:matches.append(element(parent,label,parent_rect,True))
+        for child in node:visit(child,visible,node if actionable and visible else clickable_parent)
     visit(root)
-    if len(matches)!=1:raise ExecutionBlocked('Selector is missing, disabled, or ambiguous; no action dispatched.')
-    return matches[0]
+    unique={(m.bounds,m.resource_id):m for m in matches}
+    if len(unique)!=1:raise ExecutionBlocked('Selector is missing, disabled, or ambiguous; no action dispatched.')
+    return next(iter(unique.values()))
 
 
 def selector_matches(element,selector):
@@ -97,7 +109,7 @@ class Protocol:
     def __init__(self,agent):
         if (agent.output/'execution-evidence.json').exists():raise ExecutionBlocked('This output directory already contains execution evidence. Use a new run directory; consumed actions cannot be retried.')
         self.a=agent;self.spec=agent.execution;self.samples=[];self.results=[]
-        self.events=[];self.consumed=set();self.truncated=False
+        self.events=[];self.consumed=set();self.truncated=False;self.last_wait_screen=None
     def event(self,name,**details):
         self.events.append({'event':name,'elapsed_ms':self.a.elapsed_ms(),**details})
         self.save()
@@ -116,6 +128,8 @@ class Protocol:
         deadline=time.monotonic()+timeout_ms/1000
         while True:
             screen,current=self.observe()
+            # Kept for evidence when the wait fails: tells a wrong gesture apart from an app transition.
+            self.last_wait_screen=screen
             if (not package or current==package) and text.casefold() in screen.text.casefold():return screen
             if time.monotonic()>=deadline:raise ObservationIncomplete('Expected screen was not established within the bounded wait.')
             time.sleep(.1)
@@ -164,10 +178,19 @@ class Protocol:
         record['dispatch_end_ms']=round((trigger-a.started)*1000);self.event('action_end',action_id=action['id'])
         triggered=[r for r in self.spec['temporal_assertions'] if r['after_action']==action['id']]
         if triggered:self.temporals(triggered,trigger)
-        if entry:
-            screen=self.wait_screen(entry['destination_text'],entry['timeout_ms'],entry['destination_package'])
-        elif action['wait_text']:screen=self.wait_screen(action['wait_text'],action['timeout_ms'])
-        else:screen,_=self.observe()
+        expected=entry['destination_text'] if entry else action['wait_text']
+        try:
+            if entry:
+                screen=self.wait_screen(entry['destination_text'],entry['timeout_ms'],entry['destination_package'])
+            elif action['wait_text']:screen=self.wait_screen(action['wait_text'],action['timeout_ms'])
+            else:screen,_=self.observe()
+        except ObservationIncomplete:
+            last=self.last_wait_screen
+            record['wait_failed']={'expected_text':a.redact(expected)}
+            if last is not None:
+                record.update(screen=a.public_screen(last),screenshot=a.screenshot(last,index),after_fingerprint=last.fingerprint,page_changed=last.fingerprint!=record['before_fingerprint'])
+            if a.config.on_progress:a.config.on_progress(a.history)
+            raise
         record.update(screen=a.public_screen(screen),screenshot=a.screenshot(screen,index),after_fingerprint=screen.fingerprint,page_changed=screen.fingerprint!=record['before_fingerprint'])
         a.assess_checkpoints(screen,index)
         if a.config.on_progress:a.config.on_progress(a.history)

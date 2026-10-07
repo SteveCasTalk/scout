@@ -189,11 +189,20 @@ class AndroidDevice:
         last=None
         total_started=time.perf_counter()
         timings={'uiautomator_dump_ms':0,'xml_transfer_ms':0,'parse_ms':0,'retries':0}
-        for _ in range(retries):
+        # UiAutomator briefly reports "null root node" while a window is (re)attaching, e.g. right after launch.
+        transient_budget=3
+        attempt=0
+        while attempt<retries:
+            attempt+=1
             try:
                 started=time.perf_counter()
-                self.command('shell','uiautomator','dump','/sdcard/window.xml',timeout=18)
+                # `uiautomator dump` exits 0 even when it fails ("ERROR: could not get idle state" on animated
+                # screens) and leaves the previous file behind; never read a dump from an earlier observation.
+                self.command('shell','rm','-f','/sdcard/window.xml',timeout=10)
+                dump=self.command('shell','uiautomator','dump','/sdcard/window.xml',timeout=18)
                 timings['uiautomator_dump_ms']+=round((time.perf_counter()-started)*1000)
+                message=(dump.stdout+dump.stderr).decode(errors='replace')
+                if 'ERROR' in message:raise DeviceError('uiautomator dump failed: '+message.strip()[:200])
                 started=time.perf_counter()
                 raw=self.command('exec-out','cat','/sdcard/window.xml',timeout=12).stdout.decode('utf-8',errors='replace')
                 timings['xml_transfer_ms']+=round((time.perf_counter()-started)*1000)
@@ -208,6 +217,8 @@ class AndroidDevice:
             except (ET.ParseError,DeviceError,subprocess.TimeoutExpired) as exc:
                 last=exc
                 timings['retries']+=1
+                if 'null root node' in str(exc) and transient_budget>0:
+                    transient_budget-=1;attempt-=1;time.sleep(1.0);continue
                 time.sleep(.3)
         timings['total_ms']=round((time.perf_counter()-total_started)*1000)
         self.last_observation_timings=timings

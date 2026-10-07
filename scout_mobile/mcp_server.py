@@ -581,10 +581,22 @@ def reconcile_device_cleanup(run_id: str, serial: str) -> dict[str, Any]:
     return reconcile(run_id,serial)
 
 
+def _normalize_case_item(item):
+    """Prompt runs take `package`; saved cases store `app_id`. The dashboard drops unknown keys, so an
+    unmapped `package` used to save a case with no app that every later run rejected."""
+    if not isinstance(item,dict) or not isinstance(item.get('case'),dict):return item
+    case=dict(item['case']);package=case.pop('package',None)
+    if package and case.get('app_id') and case['app_id']!=package:
+        raise ValueError('Case sets both package and app_id with different values.')
+    if package and not case.get('app_id'):case['app_id']=package
+    return {**item,'case':case}
+
+
 def _author_cases(workspace_id, items, dry_run=False):
     uuid.UUID(workspace_id)
     if not isinstance(items,list) or not 1 <= len(items) <= 100:
         raise ValueError('Provide 1–100 definitions with per-item request UUIDs.')
+    items=[_normalize_case_item(item) for item in items]
     return _library_dashboard().request('/api/case-authoring', {'workspace_id':workspace_id,'items':items,'dry_run':dry_run,'runner_capabilities':capabilities()})
 
 
@@ -606,6 +618,19 @@ def update_test_case(workspace_id: str, case_id: str, expected_revision: int, de
     """Save a reviewed complete definition with optimistic revision checking and request-ID idempotency. Never executes it."""
     uuid.UUID(case_id);uuid.UUID(request_id)
     return _author_cases(workspace_id,[{'request_id':request_id,'id':case_id,'expected_revision':expected_revision,'case':definition}])
+
+
+@mcp.tool()
+def delete_test_case(workspace_id: str, case_id: str, expected_revision: int) -> dict[str, Any]:
+    """PERMANENTLY delete a saved test case. Call only when the user explicitly asked
+    to delete this specific case; never to tidy up, replace, or retry. Also deletes all
+    of its revisions, runs, evidence files, review notes, checkpoint reviews, platform
+    comparisons that used its runs, scenario matrices, matrix batches and authoring
+    request records. There is no undo; export the case first if it may be needed.
+    expected_revision must be the revision from get_test_case: a changed case returns
+    a conflict and nothing is deleted. Returns {deleted: true, id}. Never executes.
+    """
+    return _library_dashboard().delete_test_case(workspace_id, case_id, expected_revision)
 
 
 @mcp.tool()

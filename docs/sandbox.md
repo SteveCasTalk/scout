@@ -24,7 +24,10 @@ This is an explicit HTTP proxy, not an automatic hook into every app's traffic.
    for device setup and cleanup.
 
 The proxy starts during a sandbox case and stops at completion, failure,
-cancellation, or cleanup. It remains active while waiting for user input.
+cancellation, or cleanup. Scout launches the app only after the proxy is ready,
+but an app that is already running keeps state from requests made before the
+proxy existed; reload it on foreground or start it cold. A new session waits up to 15 seconds for the previous proxy to release
+its port. It remains active while waiting for user input.
 An OS lock prevents simultaneous dashboard/MCP sandbox sessions. Runs without
 sandbox fixtures do not start a proxy.
 
