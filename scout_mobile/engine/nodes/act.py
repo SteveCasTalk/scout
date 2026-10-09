@@ -129,9 +129,15 @@ class ResolveText(Node):
         if agent.device.foreground()!=agent.config.package:
             raise DeviceError('The app changed while waiting for MCP text; no text was entered.')
         resumed_screen=agent.device.observe()
-        if resumed_screen.fingerprint!=field_screen.fingerprint:
+        if resumed_screen.fingerprint==field_screen.fingerprint:
+            resumed_field=next((element for element in resumed_screen.elements if element.signature==same.signature and op in element.operations),None)
+        elif op=='TYPE_TEXT' and resumed_screen.text==field_screen.text:
+            # Layout only (e.g. the keyboard finished opening and moved the field): the app shows the same text, so
+            # accept the same field if it is still the focused one; anything else is a different screen.
+            resumed_field=agent.focused_text_field(resumed_screen,same)
+            if resumed_field and op not in resumed_field.operations:resumed_field=None
+        else:
             raise DeviceError('The app screen changed while waiting for MCP text; no text was entered.')
-        resumed_field=next((element for element in resumed_screen.elements if element.signature==same.signature and op in element.operations),None)
         if not resumed_field:
             raise DeviceError('The requested text field is no longer available; no text was entered.')
         ctx.target=resumed_field
