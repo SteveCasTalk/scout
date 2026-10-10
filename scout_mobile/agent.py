@@ -430,6 +430,11 @@ class Agent:
                 result['investigation']=investigation
             self.checkpoint_verdicts[result['id']]=self.redact_object(result)
 
+    def during_run_requirements_met(self)->bool:
+        """True when the case has required during-run checkpoints and every one of them is already satisfied."""
+        during=[self.checkpoint_verdicts[item['id']]['verdict'] for item in self.checkpoints if item['required'] and item['scope']=='during_run']
+        return bool(during) and all(verdict=='satisfied' for verdict in during)
+
     def checkpoint_outcome(self)->str:
         required=[value for value in self.checkpoint_verdicts.values() if value['required']]
         if any(value['verdict']=='violated' for value in required):return 'Failed'

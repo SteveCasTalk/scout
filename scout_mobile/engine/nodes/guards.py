@@ -1,5 +1,6 @@
 """Step-stage guards: checks that run before or around each decision and may stop the run."""
 from __future__ import annotations
+import copy
 import re
 import time
 from ...safety import CREDENTIAL_MANAGER, DATE_OF_BIRTH_GATE, GUARD_TEXT, RISKY, SWIPE_INSTRUCTION, known_credential_prompt
@@ -105,10 +106,24 @@ class CycleDetector(Node):
     name='cycle_detector';role='guard'
     summary='Stop after a navigation cycle repeats three times without checkpoint progress.'
     def run(self,ctx:RunContext):
-        cycle=ctx.agent.recent_screen_cycle(ctx.screen)
-        if cycle:
-            return ctx.finish('Inconclusive',f'Stopped after detecting a repeated {cycle}-screen navigation cycle without assertion progress.')
-        return None
+        agent=ctx.agent
+        cycle=agent.recent_screen_cycle(ctx.screen)
+        if not cycle:return None
+        reason=f'Stopped after detecting a repeated {cycle}-screen navigation cycle without assertion progress.'
+        if not (agent.checkpoints and agent.during_run_requirements_met()):
+            return ctx.finish('Inconclusive',reason)
+        # The model kept navigating after every required during-run checkpoint held. Assess the final-scope
+        # checkpoints on the settled screen, as DONE would. Only a full pass changes the outcome: a stalled run must
+        # never become Failed, so otherwise the earlier verdicts are restored and the run stays Inconclusive.
+        before=copy.deepcopy(agent.checkpoint_verdicts)
+        final=agent.device.observe()
+        if agent.boundary:agent.boundary.check(agent.device.foreground(),final)
+        if agent.verify_result(final,ctx.step):
+            return ctx.finish('Passed',reason+' Every required during-run checkpoint had been satisfied and the final-scope checkpoints held on the settled screen.',final)
+        pending=', '.join(f"{item['id']}={agent.checkpoint_verdicts[item['id']]['verdict']}" for item in agent.checkpoints if item['required'] and item['scope']=='final')
+        agent.checkpoint_verdicts=before
+        if agent.verification:agent.verification['status']='inconclusive'
+        return ctx.finish('Inconclusive',reason+f' Final-scope checkpoints did not all hold on the settled screen ({pending}); not treated as a failure.',final)
 
 
 class TutorialGuard(Node):

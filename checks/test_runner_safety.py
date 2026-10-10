@@ -414,6 +414,35 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual(trace[1]['text_source'],'MCP host LLM')
   self.assertNotIn('text',trace[1])
 
+ def _paused_text_run(self,resumed):
+  """Synthetic run: the field is focused, the host is asked for text, then the device shows `resumed`."""
+  from scout_mobile.device import Element,Screen
+  before=Screen('<hierarchy/>',[Element('1','textbox','Nickname','app:id/name','EditText','',(0,900,600,980),('TYPE_TEXT',),True)],'Nickname · Save name','before',1080,1920)
+  focused=Screen('<hierarchy/>',[Element('1','textbox','Nickname','app:id/name','EditText','',(0,900,600,980),('TYPE_TEXT',),True,False,True)],'Nickname · Save name','focused',1080,1920)
+  after=Screen('<hierarchy/>',[],'Chat opened','chat',1080,1920)
+  fake=Mock();fake.wait_for_content.return_value=before;fake.observe.side_effect=[before,focused,resumed(Element,Screen),after];fake.wait_for_change.return_value=after;fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  typed=[];fake.type_text.side_effect=lambda field,value:typed.append((field.bounds,value))
+  decisions=[{'operation':'TYPE_TEXT','target':'1','confidence':.99,'model':'test','latency_ms':1,'jev':{}},{'operation':'DONE','target':None,'confidence':.99,'model':'test','latency_ms':1,'jev':{}}]
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=decisions):
+   agent=Agent(RunConfig('app','fake',{'goal':'Save the name Hiro','steps':'Type Hiro in the Nickname field'},Path(directory),expected_text='Chat opened',mcp_host_text=True))
+   self.assertEqual(agent.run()['status'],'awaiting_input')
+   return agent.resume_text('Hiro'),typed
+
+ def test_host_text_is_typed_when_only_the_layout_moved_during_the_pause(self):
+  # The keyboard finished opening: same app text, the focused field moved up.
+  moved=lambda Element,Screen:Screen('<hierarchy/>',[Element('1','textbox','Nickname','app:id/name','EditText','',(0,600,600,680),('TYPE_TEXT',),True,False,True)],'Nickname · Save name','moved',1080,1920)
+  result,typed=self._paused_text_run(moved)
+  self.assertEqual(result['status'],'Passed')
+  self.assertEqual(typed,[((0,600,600,680),'Hiro')])
+
+ def test_host_text_is_refused_when_the_screen_content_changed_during_the_pause(self):
+  changed=lambda Element,Screen:Screen('<hierarchy/>',[Element('1','textbox','Search','app:id/search','EditText','',(0,600,600,680),('TYPE_TEXT',),True,False,True)],'Search buddies','other',1080,1920)
+  result,typed=self._paused_text_run(changed)
+  self.assertEqual(result['status'],'Execution error')
+  self.assertIn('screen changed while waiting for MCP text',result['notes'])
+  self.assertEqual(typed,[])
+
  def test_mcp_host_text_is_never_requested_for_one_time_codes(self):
   from scout_mobile.device import Element,Screen
   screen=Screen('<hierarchy/>',[Element('1','textbox','Verification code','app:id/otp','EditText','',(0,0,300,80),('TYPE_TEXT',),True,False,True)],'Verification code','otp',1080,1920)
@@ -487,6 +516,40 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual(result['status'],'Inconclusive')
   self.assertIn('2-screen navigation cycle',result['notes'])
   self.assertEqual(chooser.call_count,5)
+
+ def _cycle_run(self,checkpoints):
+  """Synthetic run: the model keeps tapping between two screens after the opening screen."""
+  from scout_mobile.device import Element,Screen
+  target=Element('1','button','More options','','Button','',(0,0,20,20),('TAP',),False)
+  screens=[Screen('',[target],label,label,1080,1920) for label in ('feed','profile','menu')]
+  fake=Mock();fake.wait_for_content.return_value=screens[0];fake.observe.return_value=screens[2]
+  fake.wait_for_change.side_effect=[screens[1],screens[2],screens[1],screens[2],screens[1],screens[2]]
+  fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
+  decision={'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}}
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',return_value=decision):
+   return Agent(RunConfig('app','fake',{'goal':'Open the feed','checkpoints':checkpoints},Path(directory),max_steps=20)).run()
+
+ def test_cycle_after_all_during_run_checkpoints_passes_when_final_checkpoints_hold(self):
+  result=self._cycle_run([{'id':'feed','expected':'feed','scope':'during_run','required':True,'method':'text_present'},
+                          {'id':'no_error','expected':'error','scope':'final','required':True,'method':'text_absent'}])
+  self.assertEqual(result['status'],'Passed')
+  self.assertIn('2-screen navigation cycle',result['notes'])
+  self.assertEqual({item['id']:item['verdict'] for item in result['checkpoint_results']},{'feed':'satisfied','no_error':'satisfied'})
+
+ def test_cycle_never_turns_an_unmet_final_checkpoint_into_a_failure(self):
+  result=self._cycle_run([{'id':'feed','expected':'feed','scope':'during_run','required':True,'method':'text_present'},
+                          {'id':'summary','expected':'order summary','scope':'final','required':True,'method':'text_present'}])
+  self.assertEqual(result['status'],'Inconclusive')
+  self.assertIn('summary=violated',result['notes'])
+  self.assertEqual({item['id']:item['verdict'] for item in result['checkpoint_results']}['summary'],'not_reached')
+
+ def test_cycle_with_an_unmet_during_run_checkpoint_stays_inconclusive_without_final_review(self):
+  result=self._cycle_run([{'id':'checkout','expected':'checkout','scope':'during_run','required':True,'method':'text_present'},
+                          {'id':'no_error','expected':'error','scope':'final','required':True,'method':'text_absent'}])
+  self.assertEqual(result['status'],'Inconclusive')
+  self.assertEqual({item['id']:item['verdict'] for item in result['checkpoint_results']}['no_error'],'not_reached')
 
  def test_runner_allows_a_requested_return_to_an_earlier_screen(self):
   from scout_mobile.device import Element,Screen
