@@ -2,7 +2,7 @@
 from __future__ import annotations
 import re
 import time
-from ...device import DeviceError
+from ...device import DeviceError, TargetCovered
 from ...model import ModelError
 from ...safety import CREDENTIAL_MANAGER, PRIVATE_CODE_FIELD
 from ..node import NEXT_STEP, Node, RunContext
@@ -152,7 +152,14 @@ class PerformAction(Node):
     def run(self,ctx:RunContext):
         agent=ctx.agent;device=agent.device;op=ctx.op;phases=ctx.phases;screen=ctx.screen
         if op in ELEMENT_OPS:
-            if op=='TAP':device.tap(ctx.target)
+            if op=='TAP':
+                try:device.tap(ctx.target,ctx.field_screen)
+                except TargetCovered as exc:
+                    # Nothing was tapped. Tell the model and let it scroll the control into view on the next step.
+                    ctx.entry['note']=f'{exc} Scroll it into view first.';ctx.entry['page_changed']=False
+                    phases['step_total_ms']=ctx.ms_since(ctx.loop_started)
+                    agent.history.append(ctx.entry)
+                    return NEXT_STEP
             else:
                 if op=='SET_VALUE':device.set_value(ctx.target,ctx.text_value)
                 else:device.type_text(ctx.target,ctx.text_value)

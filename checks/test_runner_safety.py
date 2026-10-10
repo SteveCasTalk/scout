@@ -551,6 +551,34 @@ class RunnerSafetyTests(unittest.TestCase):
   self.assertEqual(result['status'],'Inconclusive')
   self.assertEqual({item['id']:item['verdict'] for item in result['checkpoint_results']}['no_error'],'not_reached')
 
+ def test_covered_tap_is_skipped_with_a_note_and_the_run_continues(self):
+  from scout_mobile.device import Element,Screen,TargetCovered
+  card=Element('1','button','Open Sayaka','app:id/card','View','',(300,1860,780,2340),('TAP',),False)
+  hub=Screen('',[card],'My buddies','hub',1080,2340)
+  detail=Screen('',[],'Sayaka detail','detail',1080,2340)
+  fake=Mock();fake.wait_for_content.return_value=hub;fake.observe.side_effect=[hub,hub,detail];fake.wait_for_change.return_value=detail
+  fake.foreground.return_value='app';fake.installed.return_value=True
+  fake.command.return_value=SimpleNamespace(stdout=b'versionName=1.0\n')
+  fake.screenshot.side_effect=lambda path:Path(path).write_bytes(b'png')
+  fake.tap.side_effect=[TargetCovered('The target Open Sayaka is covered by other controls or system bars; not tapping it.'),None]
+  decisions=[{'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}},
+             {'operation':'TAP','target':'1','confidence':.9,'model':'test','latency_ms':1,'jev':{}},
+             {'operation':'DONE','target':None,'confidence':.9,'model':'test','latency_ms':1,'jev':{}}]
+  with tempfile.TemporaryDirectory() as directory,patch('scout_mobile.agent.AndroidDevice',return_value=fake),patch('scout_mobile.agent.choose',side_effect=decisions) as chooser:
+   result=Agent(RunConfig('app','fake',{'goal':'Open Sayaka'},Path(directory),expected_text='Sayaka detail')).run()
+  self.assertEqual(result['status'],'Passed')
+  self.assertEqual(fake.tap.call_count,2)
+  # The engine passes its live history list; the skipped tap is the first step after the opening observation.
+  skipped=[entry for entry in chooser.call_args_list[1][0][3] if 'note' in entry]
+  self.assertEqual(len(skipped),1)
+  self.assertIn('covered',skipped[0]['note'])
+  self.assertFalse(skipped[0]['page_changed'])
+
+ def test_model_sees_the_note_of_a_skipped_action(self):
+  from scout_mobile.model import decision_options
+  *_,recent=decision_options([], 'hub', 'Open Sayaka', [{'step':1,'operation':'TAP','label':'Open Sayaka','page_changed':False,'note':'covered; scroll first'}])
+  self.assertEqual(recent[-1]['note'],'covered; scroll first')
+
  def test_runner_allows_a_requested_return_to_an_earlier_screen(self):
   from scout_mobile.device import Element,Screen
   back=Element('1','button','Back','','Button','',(0,0,20,20),('TAP',),False)

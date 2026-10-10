@@ -176,7 +176,8 @@ class IOSRunnerTests(unittest.TestCase):
             with patch('scout_mobile.agent.choose',side_effect=[self.decision('TAP','1'),self.decision('DONE')]):
                 result=agent.run()
             self.assertEqual(result['status'],'Passed')
-            d.tap.assert_called_once_with(screen.elements[0])
+            d.tap.assert_called_once()
+            self.assertIs(d.tap.call_args[0][0], screen.elements[0])
 
     def test_external_app_boundary_is_blocked_not_reported_as_app_failure(self):
         screen=device(node('Button','Continue')).observe()

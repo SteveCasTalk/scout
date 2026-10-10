@@ -163,7 +163,8 @@ class PluginRunTests(unittest.TestCase):
         self.assertEqual([item for item in report['trace'] if item['step']==2][-1]['node'],'done')
         # pipeline_report writes the file, so its own entry and the lease release come after it.
         self.assertEqual(report['trace'][-1]['node'],'device_close')
-        fake.tap.assert_called_once_with(button)
+        fake.tap.assert_called_once()
+        self.assertIs(fake.tap.call_args[0][0], button)
 
 
 if __name__=='__main__':unittest.main()
