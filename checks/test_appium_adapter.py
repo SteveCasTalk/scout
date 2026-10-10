@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from scout_mobile.appium_device import AppiumAndroidDevice
+from scout_mobile.device import AndroidDevice
 from scout_mobile.device import DeviceError, Element, Screen, tap_point
 from scout_mobile.agent import Agent, RunConfig
 
@@ -124,6 +125,20 @@ class AppiumAdapterTests(unittest.TestCase):
         element = device.observe().elements[0]
         device.tap(element, device.observe())
         target.click.assert_called_once()
+
+    def test_adb_background_presses_home_waits_and_relaunches(self):
+        device = AndroidDevice('fake')
+        with patch.object(device, 'command') as command, patch.object(device, 'launch') as launch, patch('scout_mobile.device.time.sleep') as sleep:
+            device.background_app('app', 2500)
+        command.assert_called_once_with('shell', 'input', 'keyevent', '3')
+        sleep.assert_called_once_with(2.5)
+        launch.assert_called_once_with('app')
+
+    def test_appium_background_uses_the_driver_and_returns_to_the_app(self):
+        device, driver = self.device()
+        driver.current_package = 'app'
+        device.background_app('app', 4000)
+        driver.background_app.assert_called_once_with(4.0)
 
     def test_command_errors_do_not_expose_provider_payloads(self):
         device, driver = self.device()

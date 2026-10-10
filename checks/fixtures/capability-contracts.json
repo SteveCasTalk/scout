@@ -65,7 +65,12 @@
           "count": 2,
           "interval_ms": 100,
           "wait_text": "",
-          "timeout_ms": 5000
+          "timeout_ms": 5000,
+          "background_ms": 3000,
+          "travel": [
+            0.85,
+            0.15
+          ]
         }
       ],
       "temporal_assertions": [],

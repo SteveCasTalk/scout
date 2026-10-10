@@ -314,7 +314,11 @@ run used and each node's outcome and timing. See [architecture](architecture.md)
 Saved definitions can include an optional `execution` object. Its complete schema
 is returned by the template. Missing `execution` retains legacy behavior. Version 2
 supports exact resource-ID/text selectors, target-relative `SWIPE`, held `DRAG`,
-native `TAP_BURST`, `PURCHASE_ENTRY`, `TAP`, `BACK` and `OBSERVE`. Ambiguous,
+native `TAP_BURST`, `PURCHASE_ENTRY`, `TAP`, `BACK`, `OBSERVE` and `BACKGROUND`
+(Home for `background_ms`, then the app is brought back; requires `app_background`).
+`SWIPE` takes an optional `travel` `[start, end]` (fractions of the target along the
+swipe axis, from the side the finger starts on; default `[0.85, 0.15]`), e.g. `[0.7, 0.3]`
+to keep a full-screen pager swipe off its bottom control row. Ambiguous,
 disabled, hidden or out-of-viewport targets are blocked. It does not guess coordinate
 fallbacks. Appium supports these actions on Android; ADB declines the combined
 native gesture/burst requirements. Android execution/lifecycle additions are not

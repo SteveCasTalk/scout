@@ -463,6 +463,12 @@ class AndroidDevice:
     def back(self) -> None:
         self.command('shell','input','keyevent','4')
 
+    def background_app(self,package:str,milliseconds:int) -> None:
+        """Send the app to the background with Home, wait, then bring its task back to the front."""
+        self.command('shell','input','keyevent','3')
+        time.sleep(milliseconds/1000)
+        self.launch(package)
+
     def wait_for_change(self,previous:Screen,timeout:float=4) -> Screen:
         deadline=time.monotonic()+timeout
         started=time.perf_counter()

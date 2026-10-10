@@ -40,6 +40,8 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(all(k in export for k in ('id','revision','goal','steps','expected')))
     def test_unknown_and_omitted_requirements_are_rejected(self):
         with self.assertRaises(ValueError):validate_execution({'actions':[{'id':'gesture','operation':'SWIPE','package':PKG,'selector':{'text':'Message'}}]})
+        with self.assertRaises(ValueError):validate_execution({'actions':[{'id':'away','operation':'BACKGROUND','package':PKG}]})
+        self.assertEqual(validate_execution({'required_capabilities':['app_background'],'actions':[{'id':'away','operation':'BACKGROUND','package':PKG}]})['actions'][0]['background_ms'],3000)
         with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'SCOUT_ANDROID_DRIVER':'adb'}):
             with self.assertRaisesRegex(ValueError,'Unsupported'):Agent(RunConfig(PKG,'synthetic',{'execution':{'required_capabilities':['unknown']}},Path(folder)))
     def test_grants_cannot_widen_case_and_consent_is_separate(self):

@@ -164,13 +164,18 @@ class Protocol:
         elif op=='BACK':a.device.back()
         elif op=='SWIPE':
             x1,y1,x2,y2=element.bounds;cx,cy=element.center
-            points={'left':(int(x1+(x2-x1)*.85),cy,int(x1+(x2-x1)*.15),cy),'right':(int(x1+(x2-x1)*.15),cy,int(x1+(x2-x1)*.85),cy),'up':(cx,int(y1+(y2-y1)*.85),cx,int(y1+(y2-y1)*.15)),'down':(cx,int(y1+(y2-y1)*.15),cx,int(y1+(y2-y1)*.85))}
+            # travel = [start, end] as fractions along the swipe axis, measured from the side the finger starts on
+            # (default 0.85 → 0.15); a narrower range keeps the gesture off a control row inside a full-screen pager.
+            far,near=action['travel']
+            points={'left':(int(x1+(x2-x1)*far),cy,int(x1+(x2-x1)*near),cy),'right':(int(x1+(x2-x1)*near),cy,int(x1+(x2-x1)*far),cy),'up':(cx,int(y1+(y2-y1)*far),cx,int(y1+(y2-y1)*near)),'down':(cx,int(y1+(y2-y1)*near),cx,int(y1+(y2-y1)*far))}
             coords=points[action['direction']]
             if coords[:2]==coords[2:]:raise ExecutionBlocked('Target bounds are too small for this gesture.')
             a.device.swipe_coordinates(*coords,action['duration_ms']);record['gesture']={'start':coords[:2],'end':coords[2:],'duration_ms':action['duration_ms']}
         elif op=='DRAG':
             if not hasattr(a.device,'drag_coordinates'):raise ExecutionBlocked('Adapter cannot perform a drag with explicit hold.')
             a.device.drag_coordinates(*element.center,*destination.center,action['duration_ms'],action['hold_ms'])
+        elif op=='BACKGROUND':
+            a.device.background_app(action['package'],action['background_ms']);record['background_ms']=action['background_ms']
         elif op=='TAP_BURST':
             if not hasattr(a.device,'tap_burst'):raise ExecutionBlocked('Adapter cannot dispatch a native bounded tap burst.')
             record['burst']=a.device.tap_burst(element,action['count'],action['interval_ms'])

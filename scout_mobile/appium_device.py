@@ -197,5 +197,11 @@ class AppiumAndroidDevice(AndroidDevice):
         start=time.monotonic_ns();self._pointer_sequence(actions);end=time.monotonic_ns()
         return {'count':count,'interval_ms':interval_ms,'requested_offsets_ms':[i*interval_ms for i in range(count)],'dispatch_duration_ms':round((end-start)/1_000_000),'timing_source':'native_requested_offsets','delivery_timestamps_verified':False}
 
+    def background_app(self, package: str, milliseconds: int) -> None:
+        # Appium sends the app to the background and restores it after the given time (Android: Home, then resume).
+        self._call(lambda driver: driver.background_app(milliseconds / 1000))
+        if self.foreground() != package:
+            self.launch(package)
+
     def back(self) -> None:
         self._call(lambda driver: driver.back())

@@ -45,7 +45,7 @@ class External(Strict):
 
 class Action(Strict):
     id: str = Field(pattern=ID)
-    operation: Literal['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE']
+    operation: Literal['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE','BACKGROUND']
     package: str = Field(pattern=PACKAGE)
     selector: Selector | None = None
     destination: Selector | None = None
@@ -57,10 +57,16 @@ class Action(Strict):
     interval_ms: int = Field(default=100, ge=50, le=1000)
     wait_text: str = Field(default='', max_length=240)
     timeout_ms: int = Field(default=5000, ge=100, le=30000)
+    # SWIPE: [start, end] fractions of the target along the travel axis; start is on the side the finger begins.
+    travel: list[float] = Field(default_factory=lambda:[0.85,0.15], min_length=2, max_length=2)
+    # BACKGROUND: time the app spends in the background (Home) before it is brought back.
+    background_ms: int = Field(default=3000, ge=500, le=120000)
     @model_validator(mode='after')
     def shape(self):
         if self.operation in {'TAP','SWIPE','DRAG','TAP_BURST'} and self.selector is None:
             raise ValueError('This operation requires a grounded selector.')
+        if not (0.05<=self.travel[1]<self.travel[0]<=0.95):
+            raise ValueError('Swipe travel must be [start, end] with 0.05 <= end < start <= 0.95.')
         if self.operation == 'DRAG' and self.destination is None:
             raise ValueError('Drag requires a grounded destination selector.')
         if self.operation == 'PURCHASE_ENTRY' and not re.fullmatch(ID,self.entry_id):
@@ -159,6 +165,7 @@ class Execution(Strict):
         if self.external_flows:needed.add('external_packages')
         if any(a.operation in {'SWIPE','DRAG'} for a in self.actions):needed.add('target_gestures')
         if any(a.operation=='TAP_BURST' for a in self.actions):needed.add('tap_burst')
+        if any(a.operation=='BACKGROUND' for a in self.actions):needed.add('app_background')
         if self.temporal_assertions:needed.add('temporal_ui')
         if self.lifecycle.before or self.lifecycle.notification_policy!='legacy_suppress':needed.add('lifecycle')
         if self.media_assertions:needed.add('media_metadata')
@@ -170,7 +177,7 @@ class Authorizations(Strict):
     purchase_entries: list[str] = Field(default_factory=list, max_length=5)
     clear_data: bool = False
 
-FEATURES={'purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions'}
+FEATURES={'purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions','app_background'}
 
 def validate_execution(value):
     return None if value is None else Execution.model_validate(value).model_dump()
