@@ -13,6 +13,7 @@ const GAP_X = 112;
 const GAP_Y = 104;
 const PAD = 44;
 const COLUMNS = 4;
+const clampScale = (scale: number) => Math.max(0.05, Math.min(1.8, scale));
 
 export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
     const viewport = useRef<HTMLDivElement>(null);
@@ -60,7 +61,28 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
         setView({ x: 12, y: 12, scale });
     }, [nodes.length, CARD_H]);
     useEffect(() => { resetView(); }, [run.id, resetView]);
-    function changeScale(factor: number) { setView(current => ({ ...current, scale: Math.max(0.05, Math.min(1.8, current.scale * factor)) })); }
+    function changeScale(factor: number) { setView(current => ({ ...current, scale: clampScale(current.scale * factor) })); }
+    // Native, non-passive listener: React's onWheel is passive, so it cannot stop the page from scrolling as well.
+    useEffect(() => {
+        const element = viewport.current;
+        if (!element) return;
+        function onWheel(event: WheelEvent) {
+            event.preventDefault();
+            // Ctrl/Cmd + wheel, and trackpad pinch (reported with ctrlKey), zoom; any other scroll pans.
+            if (event.ctrlKey || event.metaKey) {
+                const factor = event.deltaY < 0 ? 1.08 : .92;
+                setView(current => ({ ...current, scale: clampScale(current.scale * factor) }));
+                return;
+            }
+            const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? element!.clientHeight : 1;
+            // Shift + wheel scrolls sideways on mice without a horizontal wheel.
+            const dx = (event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX) * unit;
+            const dy = (event.shiftKey && !event.deltaX ? 0 : event.deltaY) * unit;
+            setView(current => ({ ...current, x: current.x - dx, y: current.y - dy }));
+        }
+        element.addEventListener('wheel', onWheel, { passive: false });
+        return () => element.removeEventListener('wheel', onWheel);
+    }, []);
     function startPan(event: React.PointerEvent<HTMLDivElement>) {
         if ((event.target as HTMLElement).closest('[data-flow-card]')) return;
         drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
@@ -86,7 +108,7 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
                 <button type="button" aria-label="Reset canvas" title="Reset canvas" onClick={resetView}><RotateCcw size={14}/></button>
             </div>
         </div>
-        <div ref={viewport} className="flow-viewport" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onWheel={event => { if (event.ctrlKey || event.metaKey) { event.preventDefault(); changeScale(event.deltaY < 0 ? 1.08 : .92); } }}>
+        <div ref={viewport} className="flow-viewport" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
             {nodes.length ? <div className="flow-world" style={{ width, height, transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
                 <svg className="flow-connectors" width={width} height={height} aria-hidden="true"><defs><marker id="flow-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#7ca895"/></marker></defs>{coords.slice(0, -1).map((point, index) => {
                     const next = coords[index + 1];
