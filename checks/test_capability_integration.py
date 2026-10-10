@@ -83,6 +83,20 @@ class HostIntegration(unittest.TestCase):
             agent=Agent(RunConfig(PKG,'synthetic',{'execution':execution},Path(folder),backend='appium'));agent.device=Mock();agent.device.observe.return_value=screen(button='Message',clickable=False);agent.device.foreground.return_value=PKG;agent.screenshot=Mock(return_value=None)
             agent.protocol.run();agent.device.swipe_coordinates.assert_called_once_with(360,140,80,140,300)
 
+    def test_background_step_sends_the_app_away_for_the_declared_time(self):
+        with tempfile.TemporaryDirectory() as folder:
+            execution=validate_execution({'required_capabilities':['app_background'],'actions':[{'id':'away','operation':'BACKGROUND','package':PKG,'background_ms':1500}]})
+            agent=Agent(RunConfig(PKG,'synthetic',{'execution':execution},Path(folder),backend='appium'));agent.device=Mock();agent.device.observe.return_value=screen();agent.device.foreground.return_value=PKG;agent.screenshot=Mock(return_value=None)
+            agent.protocol.run();agent.device.background_app.assert_called_once_with(PKG,1500)
+
+    def test_target_swipe_follows_the_declared_travel_range(self):
+        with tempfile.TemporaryDirectory() as folder:
+            execution=validate_execution({'required_capabilities':['target_gestures'],'actions':[{'id':'next','operation':'SWIPE','package':PKG,'selector':{'text':'Message'},'direction':'up','travel':[0.7,0.3]}]})
+            agent=Agent(RunConfig(PKG,'synthetic',{'execution':execution},Path(folder),backend='appium'));agent.device=Mock();agent.device.observe.return_value=screen(button='Message',clickable=False);agent.device.foreground.return_value=PKG;agent.screenshot=Mock(return_value=None)
+            agent.protocol.run()
+            x1,y1,x2,y2,_=agent.device.swipe_coordinates.call_args[0]
+            self.assertEqual(x1,x2);self.assertGreater(y1,y2)
+
     def test_model_rechecks_external_authorization_after_foreground_changes(self):
         external='com.example.external'
         spec=validate_execution({'required_capabilities':['external_packages'],'external_flows':[{'package':external,'from_package':PKG,'entry_text':'External synthetic','return_text':'Synthetic shop','taps':[]}],'finish':'model'})

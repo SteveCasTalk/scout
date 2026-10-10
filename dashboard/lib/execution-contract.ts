@@ -3,8 +3,9 @@ const id=z.string().regex(/^[A-Za-z0-9_-]{1,40}$/), pkg=z.string().regex(/^[A-Za
 export const selectorInput=z.object({resource_id:z.string().max(240).default(''),text:z.string().max(240).default(''),class_name:z.string().max(240).default('')}).strict().refine(v=>!!v.resource_id||!!v.text,'Exact resource_id or text is required.');
 const entry=z.object({id,selector:selectorInput,screen_text:z.string().min(1).max(240),destination_package:pkg,destination_text:z.string().min(1).max(240),timeout_ms:z.number().int().min(100).max(30000).default(10000)}).strict();
 const external=z.object({package:pkg,from_package:pkg,entry_text:z.string().min(1).max(240),return_text:z.string().min(1).max(240),max_duration_ms:z.number().int().min(100).max(120000).default(30000),max_actions:z.number().int().min(0).max(10).default(2),taps:z.array(selectorInput).max(10).default([]),allow_back:z.boolean().default(false),checkout:z.boolean().default(false),require_return:z.boolean().default(true)}).strict();
-const action=z.object({id,operation:z.enum(['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE']),package:pkg,selector:selectorInput.nullable().default(null),destination:selectorInput.nullable().default(null),entry_id:z.string().max(40).default(''),direction:z.enum(['left','right','up','down']).default('left'),duration_ms:z.number().int().min(50).max(3000).default(300),hold_ms:z.number().int().min(0).max(2000).default(400),count:z.number().int().min(2).max(5).default(2),interval_ms:z.number().int().min(50).max(1000).default(100),wait_text:z.string().max(240).default(''),timeout_ms:z.number().int().min(100).max(30000).default(5000)}).strict().superRefine((v,c)=>{
+const action=z.object({id,operation:z.enum(['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE','BACKGROUND']),package:pkg,selector:selectorInput.nullable().default(null),destination:selectorInput.nullable().default(null),entry_id:z.string().max(40).default(''),direction:z.enum(['left','right','up','down']).default('left'),duration_ms:z.number().int().min(50).max(3000).default(300),hold_ms:z.number().int().min(0).max(2000).default(400),count:z.number().int().min(2).max(5).default(2),interval_ms:z.number().int().min(50).max(1000).default(100),wait_text:z.string().max(240).default(''),timeout_ms:z.number().int().min(100).max(30000).default(5000),background_ms:z.number().int().min(500).max(120000).default(3000),travel:z.tuple([z.number(),z.number()]).default([0.85,0.15])}).strict().superRefine((v,c)=>{
  if(['TAP','SWIPE','DRAG','TAP_BURST'].includes(v.operation)&&!v.selector)c.addIssue({code:'custom',message:'Selector required.'});
+ if(!(v.travel[1]>=0.05&&v.travel[1]<v.travel[0]&&v.travel[0]<=0.95))c.addIssue({code:'custom',message:'Swipe travel must be [start, end] with 0.05 <= end < start <= 0.95.'});
  if(v.operation==='DRAG'&&!v.destination)c.addIssue({code:'custom',message:'Drag destination required.'});
  if(v.operation==='PURCHASE_ENTRY'&&!id.safeParse(v.entry_id).success)c.addIssue({code:'custom',message:'Entry ID required.'});
 });
@@ -27,12 +28,12 @@ export const executionInput=z.object({schema_version:z.literal(2).default(2),req
  }
  const needed:string[]=[];
  if(v.purchase_entries.length)needed.push('purchase_entry');if(v.external_flows.length)needed.push('external_packages');
- if(v.actions.some(a=>['SWIPE','DRAG'].includes(a.operation)))needed.push('target_gestures');if(v.actions.some(a=>a.operation==='TAP_BURST'))needed.push('tap_burst');
+ if(v.actions.some(a=>['SWIPE','DRAG'].includes(a.operation)))needed.push('target_gestures');if(v.actions.some(a=>a.operation==='TAP_BURST'))needed.push('tap_burst');if(v.actions.some(a=>a.operation==='BACKGROUND'))needed.push('app_background');
  if(v.temporal_assertions.length)needed.push('temporal_ui');if(v.lifecycle.before.length||v.lifecycle.notification_policy!=='legacy_suppress')needed.push('lifecycle');if(v.media_assertions.length)needed.push('media_metadata');
  if(needed.some(n=>!v.required_capabilities.includes(n)))c.addIssue({code:'custom',message:'Declare every required capability: '+needed.join(', ')});
 });
 export type Execution=z.infer<typeof executionInput>;
-export const capableClient={contract_versions:[1,2],features:['purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions']};
+export const capableClient={contract_versions:[1,2],features:['purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions','app_background']};
 export function runGrants(execution:Execution|null|undefined,purchase:boolean,clear:boolean){return {purchase_entries:purchase?(execution?.purchase_entries.map(e=>e.id)||[]):[],clear_data:clear&&!!execution?.lifecycle.before.some(h=>h.operation==='clear_data')};}
 export const runnerHandshake=z.object({contract_versions:z.array(z.number().int()),features:z.array(z.string())});
 export function requireCapabilities(execution:Execution|null|undefined,peer:unknown){
