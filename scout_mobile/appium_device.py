@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .device import AndroidDevice, DeviceError, Element, Screen
+from .device import AndroidDevice, DeviceError, Element, Screen, tap_point
 
 
 class AppiumAndroidDevice(AndroidDevice):
@@ -31,6 +31,7 @@ class AppiumAndroidDevice(AndroidDevice):
             raise ValueError('Appium idle timeout must be 0–10000 milliseconds.')
         self._driver = None
         self.session_start_ms = 0
+        self._system_bars: list[tuple[int, int, int, int]] | None = None
 
     @property
     def driver(self):
@@ -134,7 +135,26 @@ class AppiumAndroidDevice(AndroidDevice):
             raise DeviceError('The observed Appium target is missing or ambiguous; re-observe before acting.')
         return matches[0]
 
-    def tap(self, element: Element) -> None:
+    def system_bars(self) -> list[tuple[int, int, int, int]]:
+        """Visible status/navigation bar rectangles; edge-to-edge apps draw content underneath them."""
+        if self._system_bars is None:
+            try:
+                bars = self._call(lambda driver: driver.execute_script('mobile: getSystemBars')) or {}
+                self._system_bars = [(int(bar['x']), int(bar['y']), int(bar['x']) + int(bar['width']), int(bar['y']) + int(bar['height']))
+                                     for bar in (bars.get('statusBar'), bars.get('navigationBar'))
+                                     if isinstance(bar, dict) and bar.get('visible') and int(bar.get('height', 0)) > 0]
+            except (DeviceError, KeyError, TypeError, ValueError):
+                self._system_bars = []
+        return self._system_bars
+
+    def tap(self, element: Element, screen: Screen | None = None) -> None:
+        point = tap_point(element, screen, self.system_bars()) if screen is not None else element.center
+        if point != element.center:
+            # The centre is covered (floating bar, system navigation): tap the uncovered point instead of click().
+            x, y = point
+            self._pointer_sequence([{'type': 'pointerMove', 'duration': 0, 'x': x, 'y': y, 'origin': 'viewport'},
+                                    {'type': 'pointerDown', 'button': 0}, {'type': 'pause', 'duration': 60}, {'type': 'pointerUp', 'button': 0}])
+            return
         target = self._element(element)
         self._call(lambda _: target.click())
 

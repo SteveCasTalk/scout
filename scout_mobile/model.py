@@ -71,7 +71,7 @@ def decision_options(elements:list[Element],page_text:str,goal:str,history:list[
     for op,candidates in targets.items():
         if candidates and op in operations:
             questions[op.lower()+'_target']={'type':'choice','criteria':{index:{'element':f'[{index}] {e.label}','role':e.role,'resource_id':e.resource_id,'current_value':'<redacted>' if e.sensitive and e.value else e.value,'checked':e.checked if e.checkable else None,'checkable':e.checkable,'focused':e.focused} for index,e in candidates.items()},'instructions':{'goal':goal,'operation':op,'rules':[POLICY,TARGET_POLICY]}}
-    recent_actions=[{k:entry[k] for k in ('step','operation','label','elapsed_ms','page_changed') if k in entry} for entry in history[-10:]]
+    recent_actions=[{k:entry[k] for k in ('step','operation','label','elapsed_ms','page_changed','note') if k in entry} for entry in history[-10:]]
     return operations,targets,questions,recent_actions
 
 def choose(elements:list[Element],page_text:str,goal:str,history:list[dict[str,Any]],platform:str='Android')->dict[str,Any]:

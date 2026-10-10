@@ -160,7 +160,7 @@ class Protocol:
             self.event('purchase_entry_consumed',entry_id=entry['id'],action_id=action['id'])
         self.event('action_start',action_id=action['id'])
         record['dispatch_start_ms']=a.elapsed_ms()
-        if op in {'TAP','PURCHASE_ENTRY'}:a.device.tap(element)
+        if op in {'TAP','PURCHASE_ENTRY'}:a.device.tap(element,screen)
         elif op=='BACK':a.device.back()
         elif op=='SWIPE':
             x1,y1,x2,y2=element.bounds;cx,cy=element.center
