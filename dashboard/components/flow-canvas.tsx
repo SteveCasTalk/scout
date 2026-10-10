@@ -64,11 +64,16 @@ export function FlowCanvas({ run, files }: { run: Run; files: Evidence[] }) {
     function startPan(event: React.PointerEvent<HTMLDivElement>) {
         if ((event.target as HTMLElement).closest('[data-flow-card]')) return;
         drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
-        event.currentTarget.setPointerCapture(event.pointerId);
+        // The pointer can already be gone (quick touch, or the browser took the gesture); panning still works without capture.
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* no active pointer to capture */ }
     }
     function movePan(event: React.PointerEvent<HTMLDivElement>) {
-        if (!drag.current) return;
-        setView(current => ({ ...current, x: drag.current!.panX + event.clientX - drag.current!.x, y: drag.current!.panY + event.clientY - drag.current!.y }));
+        // Read the drag start now: React may run the state updater after pointerup/pointercancel has cleared it.
+        const start = drag.current;
+        if (!start) return;
+        const x = start.panX + event.clientX - start.x;
+        const y = start.panY + event.clientY - start.y;
+        setView(current => ({ ...current, x, y }));
     }
     return <div className="flow-editor">
         <div className="flow-toolbar">
