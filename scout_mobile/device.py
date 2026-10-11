@@ -56,6 +56,68 @@ class Screen:
     width: int
     height: int
 
+Rect = tuple[int,int,int,int]
+
+
+class TargetCovered(DeviceError):
+    """The chosen control has no point a tap would reach; nothing was tapped."""
+ROW_MARGIN = 16  # px around a covering row of controls, for its container's padding
+CLEARANCE = 48  # px from any cover that counts as comfortably tappable
+
+
+def _inside(x:int,y:int,rect:Rect)->bool:
+    return rect[0]<=x<rect[2] and rect[1]<=y<rect[3]
+
+
+def _overlaps(a:Rect,b:Rect)->bool:
+    return a[0]<b[2] and b[0]<a[2] and a[1]<b[3] and b[1]<a[3]
+
+
+def _distance(point:tuple[int,int],rect:Rect)->float:
+    dx=max(rect[0]-point[0],0,point[0]-rect[2]);dy=max(rect[1]-point[1],0,point[1]-rect[3])
+    return (dx*dx+dy*dy)**.5
+
+
+def _contains(outer:Rect,inner:Rect)->bool:
+    return outer[0]<=inner[0] and outer[1]<=inner[1] and outer[2]>=inner[2] and outer[3]>=inner[3]
+
+
+def tap_point(element:Element,screen:Screen|None,blocked:tuple[Rect,...]|list[Rect]=())->tuple[int,int]:
+    """Point inside `element` that a tap would actually reach.
+
+    Excludes `blocked` areas (system bars) and interactive elements listed after the target that partly overlap it:
+    later nodes are drawn on top, e.g. a floating bottom bar over the last row of a list. Such an element covers its
+    whole row of controls (the bar's container takes the touch too). An overlay that contains the
+    whole target is ignored, because the observed tree cannot tell an overlay from a container. Raises DeviceError when
+    every candidate point is covered, so a covered control is never tapped through another one.
+    """
+    left,top,right,bottom=element.bounds
+    covers=[tuple(rect) for rect in blocked if _overlaps(element.bounds,tuple(rect))]
+    if screen is not None:
+        index=next((i for i,item in enumerate(screen.elements) if item.signature==element.signature),None)
+        if index is not None:
+            later=[item.bounds for item in screen.elements[index+1:] if 'TAP' in item.operations
+                   and not _contains(item.bounds,element.bounds) and not _contains(element.bounds,item.bounds)]
+            for rect in later:
+                if not _overlaps(rect,element.bounds):continue
+                # A row of controls drawn on top (tab bar, toolbar) usually sits on a container that also takes the
+                # touch but is not itself tappable in the tree: cover the row's whole band, with a small margin.
+                row=[other for other in later if other[1]<rect[3] and rect[1]<other[3]]
+                covers.append((min(r[0] for r in row)-ROW_MARGIN,min(r[1] for r in row)-ROW_MARGIN,
+                               max(r[2] for r in row)+ROW_MARGIN,max(r[3] for r in row)+ROW_MARGIN))
+    if not covers:return element.center
+    width=max(1,right-left);height=max(1,bottom-top)
+    fractions=(.5,.35,.65,.2,.8,.08,.92)
+    candidates=sorted(((left+round(width*fx),top+round(height*fy)) for fx in fractions for fy in fractions),
+                      key=lambda point:abs(point[0]-element.center[0])+abs(point[1]-element.center[1]))
+    free=[point for point in candidates if not any(_inside(*point,rect) for rect in covers)]
+    if free:
+        # Prefer points well clear of every cover (a sliver between two bars is easy to miss), then the most central.
+        clearance=lambda point:min(min(_distance(point,rect) for rect in covers),CLEARANCE)
+        return max(free,key=lambda point:(clearance(point),-abs(point[0]-element.center[0])-abs(point[1]-element.center[1])))
+    raise TargetCovered(f'The target {element.label or element.resource_id or "element"} is covered by other controls or system bars; not tapping it.')
+
+
 class AndroidDevice:
     backend = 'adb'
     platform = 'Android'
@@ -328,8 +390,8 @@ class AndroidDevice:
                 finally:
                     self.command('shell','rm','-f',remote,timeout=10,check=False)
 
-    def tap(self,element:Element) -> None:
-        x,y=element.center
+    def tap(self,element:Element,screen:Screen|None=None) -> None:
+        x,y=tap_point(element,screen) if screen is not None else element.center
         self.command('shell','input','tap',str(x),str(y))
 
     def type_text(self,element:Element,value:str) -> None:
@@ -401,24 +463,31 @@ class AndroidDevice:
     def back(self) -> None:
         self.command('shell','input','keyevent','4')
 
+    def background_app(self,package:str,milliseconds:int) -> None:
+        """Send the app to the background with Home, wait, then bring its task back to the front."""
+        self.command('shell','input','keyevent','3')
+        time.sleep(milliseconds/1000)
+        self.launch(package)
+
     def wait_for_change(self,previous:Screen,timeout:float=4) -> Screen:
         deadline=time.monotonic()+timeout
         started=time.perf_counter()
         count=0
         observe_ms=0
+        last=None
         while time.monotonic()<deadline:
             time.sleep(.25)
-            next_screen=self.observe()
+            last=self.observe()
             count+=1
             observe_ms+=self.last_observation_timings.get('total_ms',0)
-            if next_screen.fingerprint!=previous.fingerprint:
-                self.last_wait_timings={'polls':count,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
-                return next_screen
-        final=self.observe()
-        count+=1
-        observe_ms+=self.last_observation_timings.get('total_ms',0)
+            if last.fingerprint!=previous.fingerprint:break
+        # The last poll is already a fresh observation; only observe again if no poll ran.
+        if last is None:
+            last=self.observe()
+            count+=1
+            observe_ms+=self.last_observation_timings.get('total_ms',0)
         self.last_wait_timings={'polls':count,'observe_total_ms':observe_ms,'total_ms':round((time.perf_counter()-started)*1000)}
-        return final
+        return last
 
     def wait_for_content(self,timeout:float=20) -> Screen:
         """Wait for content and a settled accessibility hierarchy after launch."""

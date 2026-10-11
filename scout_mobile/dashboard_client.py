@@ -86,6 +86,20 @@ class DashboardClient:
             raise ValueError('expected_revision must be the positive revision you last read.')
         return self.request('/api/cases', {'id': case_id, 'workspace_id': workspace_id, 'revision': expected_revision}, method='DELETE')
 
+    def clear_runs(self, workspace_id: str, case_id: str | None = None) -> dict:
+        """Permanently delete run history for a workspace, or for one case when case_id is given.
+
+        Removes runs (including scenario-matrix runs), their evidence files, run notes,
+        checkpoint reviews, platform comparisons that used them, and matrix batches. Test
+        cases, revisions, scenario matrices and case notes are kept. The dashboard answers
+        404 when the workspace or case is not found. Returns
+        {deleted_runs, deleted_evidence, deleted_batches}.
+        """
+        packet = {'workspace_id': str(uuid.UUID(workspace_id))}
+        if case_id is not None:
+            packet['case_id'] = str(uuid.UUID(case_id))
+        return self.request('/api/runs', packet, method='DELETE')
+
     def upload(self, run_id: str, path: Path):
         if not path.stat().st_size or path.stat().st_size > 25*1024*1024:
             raise ValueError('Evidence files must be nonempty and at most 25 MB.')

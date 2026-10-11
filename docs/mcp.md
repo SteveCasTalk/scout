@@ -307,10 +307,18 @@ readiness without launching apps, changing settings, starting listeners or signi
 in. A selected busy device is not probed for its app build. Authentication, proxy
 routing, CA trust and feature readiness remain separate from HTTP availability.
 
+`get_runner_pipeline()` lists the runner's layers and its node pipeline, including
+installed plugins. With `run_id` (and optionally `node`), it returns the nodes that
+run used and each node's outcome and timing. See [architecture](architecture.md).
+
 Saved definitions can include an optional `execution` object. Its complete schema
 is returned by the template. Missing `execution` retains legacy behavior. Version 2
 supports exact resource-ID/text selectors, target-relative `SWIPE`, held `DRAG`,
-native `TAP_BURST`, `PURCHASE_ENTRY`, `TAP`, `BACK` and `OBSERVE`. Ambiguous,
+native `TAP_BURST`, `PURCHASE_ENTRY`, `TAP`, `BACK`, `OBSERVE` and `BACKGROUND`
+(Home for `background_ms`, then the app is brought back; requires `app_background`).
+`SWIPE` takes an optional `travel` `[start, end]` (fractions of the target along the
+swipe axis, from the side the finger starts on; default `[0.85, 0.15]`), e.g. `[0.7, 0.3]`
+to keep a full-screen pager swipe off its bottom control row. Ambiguous,
 disabled, hidden or out-of-viewport targets are blocked. It does not guess coordinate
 fallbacks. Appium supports these actions on Android; ADB declines the combined
 native gesture/burst requirements. Android execution/lifecycle additions are not
@@ -419,6 +427,20 @@ revision from `get_test_case`; a changed case returns a conflict and nothing is
 deleted. There is no undo; export the case first if it may be needed. The
 dashboard exposes the same operation as `DELETE /api/cases` with
 `{id, workspace_id, revision}` and a "Delete test case" action with confirmation.
+
+`clear_test_runs(workspace_id, case_id=None)` permanently deletes saved run history
+while keeping the test cases. Call it only when the user explicitly asked to clear
+runs. Without `case_id` it clears every run in the workspace; with `case_id` only that
+case's runs. It removes the runs (including scenario-matrix runs) with their evidence
+rows and stored evidence files, run review notes, checkpoint reviews, platform
+comparisons (and their reviews) that used one of the runs, and matrix batches. Test
+cases, retained revisions, scenario matrices, case notes and authoring request
+records are kept. It returns `{deleted_runs, deleted_evidence, deleted_batches}`;
+an unknown workspace or case returns not found and nothing is deleted. There is no
+undo. Results still kept by the local runner can be imported again by the
+dashboard's Refresh sync. The dashboard exposes the same operation as
+`DELETE /api/runs` with `{workspace_id, case_id?}`, a workspace-level "Clear run
+history" action and a per-case "Clear runs" action, each with confirmation.
 
 New definitions export in `{"format":"scout-case-v2","case":...}`; legacy cases
 remain flat. Baseline loaders reject the envelope before device inventory. New

@@ -567,6 +567,22 @@ def get_runner_capabilities(platform: Literal['Android','iOS'] = 'Android', back
 
 
 @mcp.tool()
+def get_runner_pipeline(run_id: str | None = None, node: str | None = None) -> dict[str, Any]:
+    """Inspect the run engine: layers and the node pipeline (with installed plugins), or with run_id the node graph and per-node outcomes/timings that run used. Optionally filter the trace to one node. Does not operate a device."""
+    from .architecture import describe as describe_layers
+    from .engine import build_pipeline
+    load_local_env()
+    if run_id is None:
+        return {"layers": describe_layers(), "pipeline": build_pipeline().describe()}
+    report = _read_run_json(_run_directory(run_id), "pipeline.json", None)
+    if report is None:
+        raise ValueError("This run has no pipeline.json; it predates the node pipeline.")
+    if node:
+        report["trace"] = [item for item in report["trace"] if item["node"] == node]
+    return {"run_id": run_id, **report}
+
+
+@mcp.tool()
 def diagnose_environment(serial: str | None = None, package: str | None = None, workspace_id: str | None = None) -> dict[str, Any]:
     """Read-only readiness. Credentials are presence-only; proxy routing/CA and feature readiness are not inferred. No app launch, reset or service startup."""
     load_local_env()
@@ -631,6 +647,19 @@ def delete_test_case(workspace_id: str, case_id: str, expected_revision: int) ->
     a conflict and nothing is deleted. Returns {deleted: true, id}. Never executes.
     """
     return _library_dashboard().delete_test_case(workspace_id, case_id, expected_revision)
+
+
+@mcp.tool()
+def clear_test_runs(workspace_id: str, case_id: str | None = None) -> dict[str, Any]:
+    """PERMANENTLY delete saved run history. Call only when the user explicitly asked
+    to clear runs for this workspace or case; never to tidy up, reset, or retry. Without
+    case_id it clears every run in the workspace; with case_id only that case's runs.
+    Deletes the runs (including scenario-matrix runs), their evidence files, run review
+    notes, checkpoint reviews, platform comparisons that used them, and matrix batches.
+    Keeps the test cases, revisions, scenario matrices and case notes. There is no undo.
+    Returns {deleted_runs, deleted_evidence, deleted_batches}. Never executes.
+    """
+    return _library_dashboard().clear_runs(workspace_id, case_id)
 
 
 @mcp.tool()
