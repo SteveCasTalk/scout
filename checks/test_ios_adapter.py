@@ -1,5 +1,6 @@
 """iOS adapter regression checks using synthetic hierarchies, no live device."""
 import base64
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -113,13 +114,25 @@ class IOSAdapterTests(unittest.TestCase):
         d=device(node('Button','Home'))
         driver=d.driver
         driver.stop_recording_screen.return_value=base64.b64encode(b'fixture-video').decode()
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory,patch.dict('os.environ',{'SCOUT_SCREEN_RECORDING':'true'}):
             with d.screen_recording(Path(directory)):
                 d.close()
                 driver.quit.assert_not_called()
             driver.stop_recording_screen.assert_called_once()
             driver.quit.assert_called_once()
             self.assertEqual(len(list(Path(directory).glob('*.mp4'))),1)
+
+    def test_recording_is_off_by_default(self):
+        d=device(node('Button','Home'))
+        driver=d.driver
+        with tempfile.TemporaryDirectory() as directory,patch.dict('os.environ',{},clear=False):
+            os.environ.pop('SCOUT_SCREEN_RECORDING',None);os.environ.pop('JEV_SCREEN_RECORDING',None)
+            with d.screen_recording(Path(directory)):
+                d.close()
+            driver.start_recording_screen.assert_not_called()
+            driver.stop_recording_screen.assert_not_called()
+            driver.quit.assert_called_once()
+            self.assertEqual(list(Path(directory).iterdir()),[])
 
     def test_syslog_only_returns_target_pid(self):
         d=device(node('Button','Home'))

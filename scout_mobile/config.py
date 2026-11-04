@@ -12,6 +12,10 @@ def getenv(name: str, default: str | None = None) -> str | None:
     legacy = name.replace('SCOUT_', 'JEV_', 1) if name.startswith('SCOUT_') else name
     return os.environ.get(legacy, default)
 
+def screen_recording_enabled() -> bool:
+    """Video evidence is off unless SCOUT_SCREEN_RECORDING is explicitly enabled."""
+    return (getenv('SCOUT_SCREEN_RECORDING', '') or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
 def load_local_env(path: Path | None = None) -> None:
     path = path or ROOT / '.env'
     if not path.exists():

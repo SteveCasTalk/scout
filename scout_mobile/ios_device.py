@@ -1,6 +1,6 @@
 """iOS observation and actions through Appium/XCUITest on a local Mac."""
 from __future__ import annotations
-from .config import getenv
+from .config import getenv, screen_recording_enabled
 
 import base64
 from contextlib import contextmanager, nullcontext
@@ -299,6 +299,10 @@ class AppiumIOSDevice(AppiumAndroidDevice):
 
     @contextmanager
     def screen_recording(self, output):
+        if not screen_recording_enabled():
+            self.recording_error = ''
+            yield
+            return
         output.mkdir(parents=True, exist_ok=True)
         path = output / f'screen-recording-{time.time_ns()}.mp4'
         self.recording_error = ''

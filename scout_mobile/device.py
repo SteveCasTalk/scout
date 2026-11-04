@@ -11,6 +11,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from .config import screen_recording_enabled
 
 BOUNDS = re.compile(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]')
 SENSITIVE = re.compile(r'password|passcode|pin|email|username|e-mail|account', re.I)
@@ -366,6 +367,9 @@ class AndroidDevice:
     @contextmanager
     def screen_recording(self, output:Path):
         """Capture a bounded, low-bitrate Android screen recording for one runner segment."""
+        if not screen_recording_enabled():
+            yield
+            return
         output.mkdir(parents=True, exist_ok=True)
         name=f"screen-recording-{time.time_ns()}.mp4"
         remote=f"/sdcard/Movies/jev-{uuid.uuid4().hex}.mp4"

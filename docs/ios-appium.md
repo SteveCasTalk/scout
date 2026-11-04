@@ -79,7 +79,8 @@ Reload the MCP server and local dashboard runner after updating Python code.
   while an alert is visible. Accepting requires explicit per-run consent via MCP
   `allow_consent` or the dashboard setup checkbox; deny/cancel controls remain
   available. Consent is not enabled by default.
-- Each execution segment attempts an MP4 screen recording, capped at 10 minutes.
+- Screen recording is off by default. With `SCOUT_SCREEN_RECORDING=true`, each
+  execution segment attempts an MP4 screen recording, capped at 10 minutes.
   Pauses for user input split segments. ffmpeg is required. Capture failures are
   reported in outcome notes; they do not turn an app pass into an app failure.
 - Syslog capture is best effort and exported only for the target app's observed
