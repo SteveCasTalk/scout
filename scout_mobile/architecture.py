@@ -11,7 +11,7 @@ LAYERS:tuple[tuple[str,str,tuple[str,...]],...]=(
     ('platform','Device drivers: observe, act, record. Knows nothing about tests.',
      ('device','appium_runtime','appium_device','ios_device','devices')),
     ('contracts','Pure policies and schemas: execution contract, safety patterns, evidence rules.',
-     ('execution_contract','network_contract','temporal','validation','evidence','safety','media_verification')),
+     ('execution_contract','network_contract','temporal','validation','skill_import','evidence','safety','media_verification')),
     ('intelligence','Model-backed judgment: operation choice, checkpoint and starting-condition evaluation.',
      ('model','checkpoints','starting_conditions','platform_comparison')),
     ('runtime_services','Run-time side services the engine can start: network sandbox and recording.',

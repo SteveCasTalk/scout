@@ -428,6 +428,44 @@ payload returns the original response; changed payload conflicts. Updates check
 revision and ownership. Partial errors are explicit. Dry runs reserve nothing;
 authoring never executes a device action.
 
+`import_generated_test_cases(workspace_id, platform, package, project, csv_path or
+csv_text, dry_run=true)` is the standard way to save the `cases.csv` written by the
+`generate-test-cases` skill. The MCP server's instructions and the `generated_cases`
+section of `get_test_case_template` publish this to every client. The other authoring
+tools refuse a `TC-<ticket>-<NN>` title without the importer's footer in
+`preconditions`, so skill cases cannot be mapped by hand through MCP. Dashboard
+editing and prompt runs are not subject to this check. Each row becomes a case titled `<TC ID> <Title>` in suite `<Story> <Mode>`, with
+`ticket_key` from Story and `comparison_key` from the TC ID. Priority, Mode, Negative
+and Trace have no case fields, so they are kept in a footer in `preconditions`.
+Each semicolon-separated clause of the expected result becomes a required
+classification checkpoint. The last clause, and clauses stating an absence or an end
+state, are `final`; earlier clauses are `during_run`, so they can pass on an earlier
+screen. A case with one clause is judged only on the final screen. Quoted copy that
+is stated plainly also becomes an optional `during_run` `text_present` check. It is
+reported, but cannot fail the run alone, because a short toast can fall between
+samples and the app may be in another language. Wrong copy therefore fails only if
+the required classification on that clause catches it, so review `copy_*` results.
+`during_run` classifications add model calls at each step until they are satisfied.
+
+Only LIVE rows with a settled result are saved. MOCK, STORE, BE, MANUAL, DEV, TBD and
+pending-contract rows return under `held` with the reason; malformed rows return
+under `rejected`. `login_state` is set only when Preconditions state it explicitly;
+other prerequisites are not checked until someone sets them. Steps come from the
+spec, so `steps_verified` is always false. Until a case is explored, its Failed and
+Inconclusive runs carry a review note in `notes`.
+
+After a bounded exploration run, call `mark_generated_case_explored(workspace_id,
+case_id, expected_revision, exploration_run_id, steps=None, starting_conditions=None)`.
+It requires a local run for the same app and platform, and records corrected steps and
+the real starting conditions. It trusts the caller to have inspected that run.
+Importing a changed CSV row resets a case to unexplored.
+
+Re-importing finds cases by TC ID within the project, platform and story. An unchanged
+row writes nothing, so edits made after exploration survive. A changed row replaces
+the spec-owned fields, including edited steps and checkpoints, and keeps saved
+starting conditions, sandbox and execution. A row that moved to a held mode leaves
+its saved case in place and reports `saved_case_id`.
+
 `delete_test_case(workspace_id, case_id, expected_revision)` permanently deletes a
 saved case. Call it only when the user explicitly asked to delete that case. It
 also removes everything that only belongs to the case: retained revisions, its runs

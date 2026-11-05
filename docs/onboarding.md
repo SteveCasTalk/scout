@@ -100,8 +100,9 @@ before retrying, then the troubleshooting sections of
 ## 9. Load the team's shared cases
 
 Ask your assistant to import the team's exported case JSON into your workspace
-with `import_test_cases`, running it with `dry_run=true` first to validate. Then
-run one saved case end to end.
+with `import_test_cases`, running it with `dry_run=true` first to validate. For a
+new `cases.csv` from the `generate-test-cases` skill, use
+`import_generated_test_cases` instead. Then run one saved case end to end.
 
 - [ ] One saved case ran and its result synced to your dashboard
 
