@@ -36,7 +36,8 @@ from .execution_contract import decode_export, validate_execution
 from .capabilities import capabilities, diagnose
 
 
-mcp = FastMCP(PRODUCT_NAME)
+from . import skill_import
+mcp = FastMCP(PRODUCT_NAME, instructions=skill_import.INSTRUCTIONS)
 DEFAULT_PACKAGE = "com.wallet.walkthedog.uat"
 CASE_FIELDS = ("id", "revision", "goal", "steps", "expected")
 from .evidence import inventory as evidence_inventory, allowed as evidence_allowed
@@ -284,6 +285,7 @@ def get_test_case_template() -> dict[str, Any]:
     """Read before authoring a test. Canonical MCP input template and verification contract."""
     return {
         "version": 1,
+        "generated_cases": skill_import.STANDARD,
         "execution_contract": {"version": 2, "optional_field": "execution", "schema": __import__('scout_mobile.execution_contract',fromlist=['Execution']).Execution.model_json_schema(), "authorization": "Run-level authorizations are separate from saved definitions. Purchase entry only; never confirm checkout."},
         "rules": [
             "Explore the application before writing navigation steps; do not invent screens or selectors.",
@@ -601,6 +603,7 @@ def _normalize_case_item(item):
     """Prompt runs take `package`; saved cases store `app_id`. The dashboard drops unknown keys, so an
     unmapped `package` used to save a case with no app that every later run rejected."""
     if not isinstance(item,dict) or not isinstance(item.get('case'),dict):return item
+    skill_import.require_standard(item['case'])
     case=dict(item['case']);package=case.pop('package',None)
     if package and case.get('app_id') and case['app_id']!=package:
         raise ValueError('Case sets both package and app_id with different values.')
@@ -666,6 +669,92 @@ def clear_test_runs(workspace_id: str, case_id: str | None = None) -> dict[str, 
 def import_test_cases(workspace_id: str, items: list[dict[str, Any]], dry_run: bool = True) -> dict[str, Any]:
     """Validate or save up to 100 items independently. Each has request_id/case, plus id/expected_revision for updates. Per-item errors and partial success are explicit; no execution side effect."""
     return _author_cases(workspace_id,items,dry_run)
+
+
+@mcp.tool()
+def import_generated_test_cases(workspace_id: str, platform: Literal['Android','iOS'], package: str, project: str, csv_path: str | None = None, csv_text: str | None = None, dry_run: bool = True) -> dict[str, Any]:
+    """The standard way to save generate-test-cases output; never map that CSV by hand. Pass the skill's cases.csv
+    as csv_path, or csv_text when the file is not on this machine. Dry-run by default; never executes.
+    Only LIVE rows with a settled expected result are saved. MOCK, STORE, BE, MANUAL, DEV and TBD rows are
+    returned as held with the reason. Checkpoints are derived from the expected result. Steps come from the
+    spec, so explore each case, then call mark_generated_case_explored. Re-importing unchanged rows writes nothing; changed rows update
+    by TC ID and keep saved starting conditions, sandbox and execution.
+    """
+    uuid.UUID(workspace_id)
+    package, project = package.strip(), project.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,240}", package):
+        raise ValueError("package must be a valid app package or bundle ID.")
+    if not project or len(project) > 100:
+        raise ValueError("project must be 1–100 characters.")
+    if bool(csv_path) == bool(csv_text):
+        raise ValueError("Provide exactly one of csv_path or csv_text.")
+    if csv_path:
+        path = Path(csv_path).expanduser()
+        if path.suffix.casefold() != '.csv' or not path.is_file():
+            raise ValueError(f"csv_path must be an existing .csv file: {path}")
+        if path.stat().st_size > 5_000_000:
+            raise ValueError("The CSV is larger than 5 MB.")
+        csv_text = path.read_text(encoding='utf-8')
+    elif len(csv_text.encode()) > 5_000_000:
+        raise ValueError("The CSV is larger than 5 MB.")
+    plan = skill_import.plan_import(skill_import.parse_csv(csv_text), platform, package, project)
+    stories = {entry['definition']['ticket_key'] for entry in plan['ready']} | {entry['story'] for entry in plan['held'] if entry['story']}
+    client = _library_dashboard()
+    existing: dict[str, dict[str, Any]] = {}
+    for story in sorted(stories):
+        cursor = None
+        while True:
+            page = client.library(action='cases', workspace=workspace_id, project=project, platform=platform, ticket_key=story, limit=50, cursor=cursor)
+            for summary in page['items']:
+                identity = skill_import.tc_id_of(summary.get('title'))
+                if identity:
+                    existing.setdefault(identity, summary)
+            cursor = page.get('next_cursor')
+            if not cursor:
+                break
+    items, unchanged = skill_import.build_items(workspace_id, plan['ready'], existing, lambda case_id: client.library(action='case', workspace=workspace_id, case_id=case_id)['case'])
+    entries = {skill_import.tc_id_of(item['case']['title']): item for item in items}
+    warnings = {entry['tc_id']: entry['warnings'] for entry in plan['ready']}
+    results = []
+    for batch in skill_import.batches(items):
+        response = _author_cases(workspace_id, batch, dry_run)
+        for sent, outcome in zip(batch, response.get('results', [])):
+            identity = skill_import.tc_id_of(sent['case']['title'])
+            results.append({**{key: value for key, value in outcome.items() if key != 'index'}, 'tc_id': identity, 'action': 'update' if entries[identity].get('id') else 'create', 'suite': sent['case']['suite'], 'checkpoints': len(sent['case']['checkpoints']), 'warnings': warnings[identity]})
+    held = [{**entry, 'saved_case_id': existing[entry['tc_id']]['id']} if entry['tc_id'] in existing else entry for entry in plan['held']]
+    return {'dry_run': dry_run, 'execution_started': False, 'steps_verified': False,
+            'counts': {'to_save': len(results), 'unchanged': len(unchanged), 'held': len(held), 'rejected': len(plan['rejected'])},
+            'results': results, 'unchanged': unchanged, 'held': held, 'rejected': plan['rejected'],
+            'note': 'Steps come from the spec. Explore the path before trusting a failure as an app bug.'}
+
+
+@mcp.tool()
+def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None, checkpoints: list[CheckpointInput] | None = None) -> dict[str, Any]:
+    """Record that an imported case's path was confirmed by a real exploration run, with optional corrected steps,
+    starting conditions and checkpoints. Removes the review note from its later non-passing runs. Inspect the run first;
+    the run must exist locally for the same app and platform. Prefer exact-text checkpoints seen in that run, because a
+    final check sees only the last screen; ones the run contradicts are refused. Replacing checkpoints must keep each
+    acceptance criterion covered. Importing a changed CSV row resets this. Never executes.
+    """
+    uuid.UUID(workspace_id);uuid.UUID(case_id)
+    directory = _run_directory(exploration_run_id)
+    if not (directory / "result.json").is_file():
+        raise ValueError("Exploration run has no result yet.")
+    run = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+    saved = _library_dashboard().library(action='case', workspace=workspace_id, case_id=case_id)['case']
+    if run.get('package') != saved.get('app_id') or run.get('platform') != saved.get('platform'):
+        raise ValueError("The exploration run used a different app or platform than this case.")
+    conditions = None if starting_conditions is None else validate_starting_conditions(starting_conditions.model_dump())
+    replacement = None
+    if checkpoints is not None:
+        replacement = validate_checkpoints([item.model_dump() if isinstance(item, CheckpointInput) else item for item in checkpoints])
+        if not replacement:
+            raise ValueError("checkpoints must contain at least one required checkpoint.")
+        trace = json.loads((directory / "trace.json").read_text(encoding="utf-8")) if (directory / "trace.json").is_file() else []
+        skill_import.check_against_run(replacement, trace)
+    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions, replacement)
+    request_id = str(uuid.uuid5(skill_import.NAMESPACE, f'explored|{case_id}|{expected_revision}|{exploration_run_id}'))
+    return _author_cases(workspace_id, [{'request_id': request_id, 'id': case_id, 'expected_revision': expected_revision, 'case': definition}])
 
 
 def _library_dashboard():

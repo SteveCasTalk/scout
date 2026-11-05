@@ -57,6 +57,11 @@ mobile testing workflow for this repository.
   `platform`, `package`, `serial`, a concise goal, and a bounded `max_steps`.
   Ground navigation steps in observed controls. Inspect `get_run_result` and
   `get_run_screenshot` before turning the discovered path into a reusable test.
+- Convert `generate-test-cases` output (`cases.csv`) only with
+  `import_generated_test_cases`, dry run first, and never map it by hand. Report
+  its held and rejected rows. Explore each imported case, then record that with
+  `mark_generated_case_explored`, including corrected steps, starting conditions, and
+  exact-text checkpoints observed in that run.
 - Read `get_test_case_template` before defining a case. Map acceptance criteria
   to observable checkpoints with unique `id`, `expected`, `scope`, `required`,
   and `method` fields; use at most 12 checkpoints and at least one required.

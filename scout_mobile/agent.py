@@ -16,6 +16,7 @@ from .config import ROOT,getenv
 from .device import AndroidDevice, DeviceError, Element, Screen
 from .model import ModelError, choose, field_text
 from .checkpoints import validate_checkpoints, evaluate as evaluate_checkpoints
+from .skill_import import run_note
 from .starting_conditions import validate_starting_conditions, check_starting_conditions
 from .execution_contract import check_support, validate_authorizations, fingerprint
 from .execution_runtime import Boundary, Protocol, ExecutionBlocked, ObservationIncomplete
@@ -344,6 +345,7 @@ class Agent:
             if sandbox_report['status']!='satisfied' and status not in {'Blocked','Execution error'}:
                 status='Inconclusive'
                 reason+=' Sandbox evidence incomplete: required rule hits missing or proxy requests blocked. This does not establish an app bug.'
+        reason+=run_note(status,case.get('preconditions'))
         device_info=self.capture_device_info()
         result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'starting_conditions':self.redact_object(self.starting_conditions),'starting_condition_results':self.redact_object(self.starting_condition_results),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Scout iOS runner' if self.platform=='iOS' else 'Scout Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':self.platform,'device':self.config.serial,'build':device_info.get('app_version','unknown'),'device_info':device_info,'app_logs':self.capture_app_logs(),'status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False}
         if sandbox_report:
