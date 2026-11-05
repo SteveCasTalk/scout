@@ -1,5 +1,6 @@
 """generate-test-cases CSV conversion. Synthetic inputs only; no device or dashboard is used."""
 import unittest
+from unittest.mock import patch
 
 from scout_mobile import skill_import as si
 from scout_mobile.mcp_server import _normalize_case_item, get_test_case_template, mcp
@@ -64,10 +65,22 @@ class ConvertTest(unittest.TestCase):
     def test_single_clause_is_final(self):
         self.assertEqual(si.build_checkpoints('My plans lists the plan')[0]['scope'], 'final')
 
-    def test_login_state_needs_an_explicit_statement(self):
-        for text, state in (('Member with one plan', 'any'), ('Signed-in member', 'signed_in'), ('Logged in', 'signed_in'), ('Guest user', 'signed_out'), ('Not signed in', 'signed_out'), ('Guest, then signed in', 'any')):
-            self.assertEqual(si.login_state(text), state, text)
-        self.assertEqual(convert(Preconditions='Signed in member')['definition']['starting_conditions'], {'login_state': 'signed_in'})
+    def test_starting_conditions_are_left_to_the_case_author(self):
+        self.assertNotIn('starting_conditions', convert(Preconditions='Signed in member')['definition'])
+
+    def test_pronoun_clause_stays_with_the_one_before(self):
+        self.assertEqual(si.merge_clauses(['Dialog "A" shows "B"', 'it offers "C"']), ['Dialog "A" shows "B"; it offers "C"'])
+
+    def test_a_transition_keeps_its_own_checkpoint(self):
+        self.assertEqual(si.merge_clauses(['The screen closes back to the video', 'the video shows the old caption']), ['The screen closes back to the video', 'the video shows the old caption'])
+
+    def test_goal_gives_the_classifier_the_expected_result(self):
+        self.assertEqual(convert()['definition']['goal'], 'Member opens My plans. Expected result: My plans lists the plan; no error message at the end')
+
+    def test_conversion_changes_update_unchanged_rows(self):
+        before = si.source_hash(row(), 'com.example.uat')
+        with patch.object(si, 'CONVERTER_VERSION', 'next'):
+            self.assertNotEqual(si.source_hash(row(), 'com.example.uat'), before)
 
     def test_unexplored_note_only_on_unexplored_non_passing_runs(self):
         footer = convert()['definition']['preconditions']
@@ -85,8 +98,30 @@ class ConvertTest(unittest.TestCase):
         self.assertEqual(si.saved_source(marked['preconditions']), si.saved_source(saved['preconditions']))
         self.assertEqual((marked['steps'], marked['starting_conditions']), ('Tap Plans', {'login_state': 'signed_in'}))
         self.assertNotIn('revision', marked)
+        self.assertIn('explored in run run-2', si.mark_explored(marked, 'run-2')['preconditions'])
         with self.assertRaises(ValueError):
-            si.mark_explored(marked, 'run-2')
+            si.mark_explored({'preconditions': 'Ordinary case'}, 'run-2')
+
+    def test_mark_explored_replaces_checkpoints_only_when_given(self):
+        saved = {**convert()['definition'], 'revision': 2}
+        checks = [{'id': 'a', 'expected': 'Caption updated', 'scope': 'final', 'required': True, 'method': 'text_present'}]
+        self.assertEqual(si.mark_explored(saved, 'run-1', checkpoints=checks)['checkpoints'], checks)
+        self.assertEqual(si.mark_explored(saved, 'run-1')['checkpoints'], saved['checkpoints'])
+
+    def test_exact_text_must_match_the_exploration_run(self):
+        trace = [{'operation': 'TAP', 'screen': {'text': 'Discard changes?'}}, {'operation': 'VERIFY_CHECKPOINTS'}, {'operation': 'DONE', 'screen': {'text': 'Blue #Twomi'}}]
+        check = lambda text, scope, method='text_present': si.check_against_run([{'id': 'a', 'expected': text, 'scope': scope, 'required': True, 'method': method}], trace)
+        check('discard changes', 'during_run')
+        check('blue #twomi', 'final')
+        check('#Foryou', 'final', 'text_absent')
+        check('Anything', 'final', 'classification')
+        for args in (('Invented', 'during_run'), ('Discard changes?', 'final'), ('Blue', 'final', 'text_absent')):
+            with self.assertRaises(ValueError):
+                check(*args)
+
+    def test_a_run_without_screens_supports_no_checks(self):
+        with self.assertRaises(ValueError):
+            si.check_against_run([], [{'operation': 'VERIFY_CHECKPOINTS'}])
 
     def test_quoted_copy_becomes_literal_check(self):
         literal = [item for item in si.build_checkpoints('Plan screen shows "Cancel plan"') if item['method'] == 'text_present']

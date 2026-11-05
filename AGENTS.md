@@ -60,7 +60,8 @@ mobile testing workflow for this repository.
 - Convert `generate-test-cases` output (`cases.csv`) only with
   `import_generated_test_cases`, dry run first, and never map it by hand. Report
   its held and rejected rows. Explore each imported case, then record that with
-  `mark_generated_case_explored`, including corrected steps and starting conditions.
+  `mark_generated_case_explored`, including corrected steps, starting conditions, and
+  exact-text checkpoints observed in that run.
 - Read `get_test_case_template` before defining a case. Map acceptance criteria
   to observable checkpoints with unique `id`, `expected`, `scope`, `required`,
   and `method` fields; use at most 12 checkpoints and at least one required.

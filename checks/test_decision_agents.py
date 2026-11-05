@@ -102,7 +102,7 @@ class ClearFieldTests(unittest.TestCase):
         calls=[]
         device.command=lambda *args,**kwargs:calls.append(args)
         field=Element('1','textbox','Caption','','EditText',value,(0,0,9,9),('TYPE_TEXT',),True,False,focused)
-        device.observe=lambda:SimpleNamespace(elements=[SimpleNamespace(role='textbox',value=typed)])
+        device.observe=lambda:SimpleNamespace(elements=[SimpleNamespace(role='textbox',value=typed.strip())])
         with patch('scout_mobile.device.time.sleep'):
             device.type_text(field,typed)
         return calls
@@ -121,6 +121,9 @@ class ClearFieldTests(unittest.TestCase):
         self.assertEqual(sum(call.count('67') for call in calls),5004)
         self.assertEqual(sum(call.count('112') for call in calls),5004)
         self.assertLessEqual(max(len(call) for call in calls),103)
+
+    def test_trailing_spaces_settle_against_the_trimmed_value(self):
+        self.assertEqual(self.typed('old',typed='new  ')[-1],('shell','input','text','new%s%s'))
 
     def test_shell_characters_are_quoted(self):
         calls=self.typed('',typed='$(id)')

@@ -169,7 +169,7 @@ class AppiumAndroidDevice(AndroidDevice):
             deadline = time.monotonic() + 5
             while True:
                 screen = self.observe()
-                if any(e.role == 'textbox' and e.value == value for e in screen.elements):
+                if any(e.role == 'textbox' and e.value == value.strip() for e in screen.elements):  # Observed values are trimmed.
                     return
                 if time.monotonic() >= deadline:
                     raise DeviceError('Appium text entry did not settle to the requested value.')

@@ -413,7 +413,7 @@ class AndroidDevice:
             deadline=time.monotonic()+5
             while True:
                 current=self.observe()
-                if any(e.role=='textbox' and e.value==value for e in current.elements):break
+                if any(e.role=='textbox' and e.value==value.strip() for e in current.elements):break # Observed values are trimmed.
                 if time.monotonic()>=deadline:
                     raise DeviceError('Text entry did not settle to the requested value.')
                 time.sleep(.3)

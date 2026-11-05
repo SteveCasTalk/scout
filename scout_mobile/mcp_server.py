@@ -729,10 +729,12 @@ def import_generated_test_cases(workspace_id: str, platform: Literal['Android','
 
 
 @mcp.tool()
-def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None) -> dict[str, Any]:
-    """Record that an imported case's path was confirmed by a real exploration run, with optional corrected steps and
-    starting conditions. Removes the review note from its later non-passing runs. Inspect the run first; the run must
-    exist locally for the same app and platform. Importing a changed CSV row resets this. Never executes.
+def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None, checkpoints: list[CheckpointInput] | None = None) -> dict[str, Any]:
+    """Record that an imported case's path was confirmed by a real exploration run, with optional corrected steps,
+    starting conditions and checkpoints. Removes the review note from its later non-passing runs. Inspect the run first;
+    the run must exist locally for the same app and platform. Prefer exact-text checkpoints seen in that run, because a
+    final check sees only the last screen; ones the run contradicts are refused. Replacing checkpoints must keep each
+    acceptance criterion covered. Importing a changed CSV row resets this. Never executes.
     """
     uuid.UUID(workspace_id);uuid.UUID(case_id)
     directory = _run_directory(exploration_run_id)
@@ -743,7 +745,14 @@ def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revis
     if run.get('package') != saved.get('app_id') or run.get('platform') != saved.get('platform'):
         raise ValueError("The exploration run used a different app or platform than this case.")
     conditions = None if starting_conditions is None else validate_starting_conditions(starting_conditions.model_dump())
-    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions)
+    replacement = None
+    if checkpoints is not None:
+        replacement = validate_checkpoints([item.model_dump() if isinstance(item, CheckpointInput) else item for item in checkpoints])
+        if not replacement:
+            raise ValueError("checkpoints must contain at least one required checkpoint.")
+        trace = json.loads((directory / "trace.json").read_text(encoding="utf-8")) if (directory / "trace.json").is_file() else []
+        skill_import.check_against_run(replacement, trace)
+    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions, replacement)
     request_id = str(uuid.uuid5(skill_import.NAMESPACE, f'explored|{case_id}|{expected_revision}|{exploration_run_id}'))
     return _author_cases(workspace_id, [{'request_id': request_id, 'id': case_id, 'expected_revision': expected_revision, 'case': definition}])
 

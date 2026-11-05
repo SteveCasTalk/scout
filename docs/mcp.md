@@ -438,7 +438,9 @@ editing and prompt runs are not subject to this check. Each row becomes a case t
 `ticket_key` from Story and `comparison_key` from the TC ID. Priority, Mode, Negative
 and Trace have no case fields, so they are kept in a footer in `preconditions`.
 Each semicolon-separated clause of the expected result becomes a required
-classification checkpoint. The last clause, and clauses stating an absence or an end
+classification checkpoint. A clause starting with a pronoun joins the clause before
+it. `goal`
+holds the Title and Expected result, so the classifier has that context. The last clause, and clauses stating an absence or an end
 state, are `final`; earlier clauses are `during_run`, so they can pass on an earlier
 screen. A case with one clause is judged only on the final screen. Quoted copy that
 is stated plainly also becomes an optional `during_run` `text_present` check. It is
@@ -449,16 +451,26 @@ the required classification on that clause catches it, so review `copy_*` result
 
 Only LIVE rows with a settled result are saved. MOCK, STORE, BE, MANUAL, DEV, TBD and
 pending-contract rows return under `held` with the reason; malformed rows return
-under `rejected`. `login_state` is set only when Preconditions state it explicitly;
-other prerequisites are not checked until someone sets them. Steps come from the
+under `rejected`. Starting conditions stay at their defaults because the app's opening screen often
+cannot prove them, such as login on a Home feed, which would falsely block the case.
+Set them with `mark_generated_case_explored` where they are observable. Steps come from the
 spec, so `steps_verified` is always false. Until a case is explored, its Failed and
 Inconclusive runs carry a review note in `notes`.
 
 After a bounded exploration run, call `mark_generated_case_explored(workspace_id,
-case_id, expected_revision, exploration_run_id, steps=None, starting_conditions=None)`.
-It requires a local run for the same app and platform, and records corrected steps and
-the real starting conditions. It trusts the caller to have inspected that run.
-Importing a changed CSV row resets a case to unexplored.
+case_id, expected_revision, exploration_run_id, steps=None, starting_conditions=None,
+checkpoints=None)`. It requires a local run for the same app and platform, and records
+corrected steps, the real starting conditions and replacement checkpoints. It trusts the
+caller to have inspected that run and to keep each acceptance criterion covered.
+
+Prefer exact text seen in the run as checkpoints. A `final` classification sees only the
+last screen, so it can't judge a clause such as "shows the old caption". Exact-text
+checks are refused when the run contradicts them: `text_present` must be on the final
+screen for `final` or on any screen for `during_run`, and a `final` `text_absent` must
+not be on the final screen. They suit one account and video, and absence on the final
+screen doesn't prove the text never appeared. A case can be explored again.
+Importing a changed CSV row, or the same row after the conversion itself changes,
+resets a case to unexplored.
 
 Re-importing finds cases by TC ID within the project, platform and story. An unchanged
 row writes nothing, so edits made after exploration survive. A changed row replaces

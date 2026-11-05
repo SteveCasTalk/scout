@@ -23,6 +23,8 @@ HELD_MODES = {
 }
 MODES = {'LIVE', *HELD_MODES}
 SOURCE_LABEL = '[generate-test-cases]'
+# Bump when conversion output changes, so re-imports update cases whose CSV rows did not change.
+CONVERTER_VERSION = '3'
 NAMESPACE = uuid.UUID('6f0c3a52-5a0e-4c61-9d3b-2f1e7f6a9b10')
 
 _ID = re.compile(r'^TC-\d+-\d+[a-z]?$')
@@ -32,9 +34,10 @@ _QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”|「([^」]+)」')
 _NOT_LITERAL = re.compile(r"\b(no|not|never|without|absent|hidden|removed|disappears?|doesn't|or|if|unless|when|instead|before|until|previously)\b", re.I)
 # Stating an absence or an end state only means something once the flow has finished.
 _FINAL_ONLY = re.compile(r"\b(no|not|never|without|absent|hidden|removed|disappears?|doesn't|at the end|ends? on|remains? on|stays? on|finally)\b", re.I)
-_SIGNED_OUT = re.compile(r"\b(signed[- ]out|logged[- ]out|not (signed|logged)[- ]in|guest)\b", re.I)
-_SIGNED_IN = re.compile(r"\b(signed[- ]in|logged[- ]in)\b", re.I)
+# A clause starting with a pronoun can't be judged without the clause before it.
+_NEEDS_PREVIOUS = re.compile(r"^(it|its|they|their|this|that|these|those)\b", re.I)
 SPEC_STEPS = 'Steps: from spec, confirm with exploration'
+_STEPS_NOTE = re.compile(re.escape(SPEC_STEPS) + r'|Steps: explored in run [A-Za-z0-9_-]+')
 UNEXPLORED_NOTE = ' Review first: this imported case\'s steps come from the spec and were not confirmed by exploration, and its setup may not have been checked, so this result does not establish an app bug.'
 _SOURCE = re.compile(re.escape(SOURCE_LABEL) + r'.*\bSource: ([0-9a-f]{16})\s*$', re.S)
 _LIMITATIONS = (
@@ -55,16 +58,16 @@ STANDARD = {
     'rule': 'Never map this CSV by hand. create_test_case, update_test_case, validate_test_cases and import_test_cases refuse TC-<ticket>-<NN> titles that lack the importer footer.',
     'columns': list(COLUMNS),
     'mapping': {
-        'title': '<ID> <Title>, cut to 160 characters', 'goal': 'Title', 'suite': '<Story> <Mode>', 'ticket_key': 'Story, uppercase',
+        'title': '<ID> <Title>, cut to 160 characters', 'goal': 'Title and Expected result, which give the checkpoint classifier context', 'suite': '<Story> <Mode>', 'ticket_key': 'Story, uppercase',
         'comparison_key': 'ID', 'steps': 'Steps, one per line', 'expected': 'Expected result',
         'preconditions': 'Preconditions plus a footer holding ID, Priority, Mode, Negative, Trace and the source hash',
-        'checkpoints': 'One required classification per semicolon-separated clause, final for the last clause and for stated absences or end states, during_run otherwise; plus optional during_run text_present for quoted copy that is stated plainly',
-        'starting_conditions': 'login_state only when Preconditions state it explicitly; confirm other prerequisites before running',
+        'checkpoints': 'One required classification per semicolon-separated clause, joined to the clause before it when it starts with a pronoun; final for the last clause and for stated absences or end states, during_run otherwise; plus optional during_run text_present for quoted copy that is stated plainly',
+        'starting_conditions': 'Left at defaults, because the opening screen often cannot prove them; confirm prerequisites before running',
     },
     'saved_modes': ['LIVE'],
     'held_modes': HELD_MODES,
     'also_held': 'Rows marked TBD or pending contract.',
-    'after_import': 'Explore each case with a bounded prompt run, then call mark_generated_case_explored with that run ID, corrected steps and real starting_conditions. Non-passing runs carry a review note until then.',
+    'after_import': 'Explore each case with a bounded prompt run, then call mark_generated_case_explored with that run ID, corrected steps, real starting_conditions and checkpoints. Prefer exact text seen in that run over clauses the classifier must judge, because a final check sees only the last screen. Non-passing runs carry a review note until then.',
 }
 
 
@@ -108,9 +111,20 @@ def split_clauses(text: str) -> list[str]:
     return [clause.strip() for clause in clauses if clause.strip()]
 
 
+def merge_clauses(clauses: list[str]) -> list[str]:
+    """Keep together clauses the classifier could not judge alone."""
+    merged: list[str] = []
+    for clause in clauses:
+        if merged and _NEEDS_PREVIOUS.match(clause):
+            merged[-1] = f'{merged[-1]}; {clause}'
+        else:
+            merged.append(clause)
+    return merged
+
+
 def build_checkpoints(expected: str) -> list[dict[str, Any]]:
     checkpoints, literals = [], []
-    clauses = split_clauses(expected)
+    clauses = merge_clauses(split_clauses(expected))
     for index, clause in enumerate(clauses, 1):
         # Earlier clauses may describe earlier screens; the last one is where the flow must end.
         scope = 'final' if index == len(clauses) or _FINAL_ONLY.search(clause) else 'during_run'
@@ -130,16 +144,9 @@ def build_checkpoints(expected: str) -> list[dict[str, Any]]:
     return checkpoints
 
 
-def login_state(preconditions: str) -> str:
-    """Use only an explicit statement; personas such as "member" do not establish a session."""
-    signed_out = bool(_SIGNED_OUT.search(preconditions))
-    signed_in = bool(_SIGNED_IN.search(_SIGNED_OUT.sub(' ', preconditions)))
-    return 'any' if signed_out == signed_in else 'signed_out' if signed_out else 'signed_in'
-
-
 def source_hash(row: dict[str, Any], package: str) -> str:
     values = [str(row.get(name) or '').strip() for name in COLUMNS if name != 'Status']
-    return hashlib.sha256('\0'.join([*values, package]).encode()).hexdigest()[:16]
+    return hashlib.sha256('\0'.join([*values, package, CONVERTER_VERSION]).encode()).hexdigest()[:16]
 
 
 def convert_row(row: dict[str, Any], platform: str, package: str, project: str) -> dict[str, Any]:
@@ -179,9 +186,8 @@ def convert_row(row: dict[str, Any], platform: str, package: str, project: str) 
         'definition': {
             'title': full_title if len(full_title) <= 160 else full_title[:159] + '…',
             'platform': platform, 'project': project, 'suite': suite, 'ticket_key': story, 'app_id': package,
-            'comparison_key': identity, 'goal': title, 'preconditions': preconditions, 'steps': steps,
+            'comparison_key': identity, 'goal': f'{title}. Expected result: {values["Expected result"]}'[:4000], 'preconditions': preconditions, 'steps': steps,
             'expected': values['Expected result'], 'checkpoints': build_checkpoints(values['Expected result']),
-            'starting_conditions': {'login_state': login_state(values['Preconditions'])},
         },
     }
 
@@ -228,14 +234,34 @@ def run_note(status: str, preconditions: Any) -> str:
     return UNEXPLORED_NOTE if status in {'Failed', 'Inconclusive'} and SOURCE_LABEL in str(preconditions or '') and SPEC_STEPS in str(preconditions) else ''
 
 
-def mark_explored(saved: dict[str, Any], run_id: str, steps: str | None = None, starting_conditions: dict[str, Any] | None = None) -> dict[str, Any]:
+def check_against_run(checkpoints: list[dict[str, Any]], trace: list[dict[str, Any]]) -> None:
+    """Refuse exact-text checks the run's screens contradict, so they can't be invented."""
+    screens = [str((entry.get('screen') or {}).get('text') or '') for entry in trace if entry.get('screen')]
+    if not screens:
+        raise ValueError('The exploration run has no observed screens.')
+    for item in checkpoints:
+        if item['method'] == 'classification':
+            continue
+        text, final = item['expected'].casefold(), item['scope'] == 'final'
+        pool = screens[-1:] if final else screens
+        found = any(text in screen.casefold() for screen in pool)
+        where = 'its final screen' if final else 'any of its screens'
+        if item['method'] == 'text_present' and not found:
+            raise ValueError(f'{item["id"]}: "{item["expected"]}" is not on {where} in the exploration run.')
+        if item['method'] == 'text_absent' and found and final:
+            raise ValueError(f'{item["id"]}: "{item["expected"]}" is on {where} in the exploration run.')
+
+
+def mark_explored(saved: dict[str, Any], run_id: str, steps: str | None = None, starting_conditions: dict[str, Any] | None = None, checkpoints: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Return a saved imported case recorded as explored, with any corrections from that run."""
     preconditions = str(saved.get('preconditions') or '')
-    if not saved_source(preconditions) or SPEC_STEPS not in preconditions:
-        raise ValueError('This case is not an unexplored imported case.')
+    if not saved_source(preconditions) or not _STEPS_NOTE.search(preconditions):
+        raise ValueError('This case is not an imported case.')
     fields = ('workspace_id', 'project', 'ticket_key', 'comparison_key', 'app_id', 'title', 'platform', 'suite', 'goal', 'expected', 'assertion_text', 'checkpoints', 'sandbox', 'execution', 'starting_conditions', 'steps')
     definition = {field: saved[field] for field in fields if field in saved}
-    definition['preconditions'] = preconditions.replace(SPEC_STEPS, f'Steps: explored in run {run_id}')
+    definition['preconditions'] = _STEPS_NOTE.sub(f'Steps: explored in run {run_id}', preconditions)
+    if checkpoints is not None:
+        definition['checkpoints'] = checkpoints
     if steps and steps.strip():
         definition['steps'] = steps.strip()
     if starting_conditions is not None:
