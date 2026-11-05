@@ -351,10 +351,13 @@ Android it and any `CLEAR_TEXT` the driver cannot finish run over the device's A
 the trace records this as `transport`. These are fixed actions under the same guards, and cases
 cannot send arbitrary ADB commands.
 
-Starting condition `account_role` names a test account. Scout reads its username from
-`SCOUT_ACCOUNT_<ROLE>_USERNAME` in local `.env`; a missing role is Blocked before any device
-action, and the case needs a `REQUIRE` with `require_account` to verify it on screen. Roles are
-verified, not signed in, so sign the right account in on the device first.
+Starting condition `account_username` is the visible username a case needs. A username given
+when starting the run (`account_username` on `run_test_case`, `run_test_suite` or
+`run_mobile_test`, or the dashboard's run dialog) overrides it. `account_role` is an optional
+label for the kind of account. A case that needs an account but has no username is Blocked before
+any device action, and it needs a `REQUIRE` with `require_account` to verify the username on
+screen. Accounts are verified, not signed in, so sign the right one in on the device first. Emails
+and passwords never go in cases or run input; they stay in the local credential provider.
 
 The `control_state` checkpoint method checks one control by exact label in `expected`, with
 `state` set to `enabled`, `disabled`, `checked` or `unchecked`, without a model.
@@ -481,7 +484,7 @@ pending-contract rows return under `held` with the reason; malformed rows return
 under `rejected`. Starting conditions stay at their defaults because the app's opening screen often
 cannot prove them, such as login on a Home feed, which would falsely block the case.
 Rows whose preconditions name an account or test data are listed under `setup_required`,
-and `mark_generated_case_explored` refuses them until an `account_role`, `required_data`,
+and `mark_generated_case_explored` refuses them until an `account_username`, `account_role`, `required_data`,
 `login_state` or `REQUIRE` step enforces that. Steps come from the
 spec, so `steps_verified` is always false. Until a case is explored, its Failed and
 Inconclusive runs carry a review note in `notes`.

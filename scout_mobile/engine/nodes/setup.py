@@ -4,7 +4,7 @@ import json
 import re
 import time
 from ...safety import GUARD_TEXT
-from ...starting_conditions import account_username, check_starting_conditions
+from ...starting_conditions import check_starting_conditions
 from ..node import Node, RunContext
 
 
@@ -17,16 +17,19 @@ class AcquireDeviceLease(Node):
 
 class CheckAccountRole(Node):
     name='account_role';stage='setup';role='guard';locked=True
-    summary='Block before any device action when a declared account role is not configured or cannot be verified.'
+    summary='Block before any device action when a required account has no username, or nothing verifies it.'
     def run(self,ctx:RunContext):
-        agent=ctx.agent;role=agent.starting_conditions['account_role']
-        if not role:return None
+        agent=ctx.agent;username=agent.account_username
         actions=(agent.execution or {}).get('actions',[])
-        if not account_username(role):code,reason='account_not_configured',f'account role "{role}" is not configured on this runner.'
-        elif not any(item['require_account'] for item in actions):code,reason='account_unverifiable',f'account role "{role}" has no REQUIRE step that verifies it on screen.'
+        verifies=any(item['require_account'] for item in actions)
+        role=agent.starting_conditions['account_role'] or username
+        if not role and not verifies:return None
+        if username and username in agent.secrets:code,reason='account_not_configured','the account username must not be a locally configured credential.'
+        elif not username:code,reason='account_not_configured',f'account "{role}" has no username. Give it when starting the run, or set it on the test case.' if role else 'this case verifies an account but has no username. Give it when starting the run, or set it on the test case.'
+        elif not verifies:code,reason='account_unverifiable',f'account "{role}" has no REQUIRE step that verifies it on screen.'
         else:return None
         agent.stop_code=code
-        agent.starting_condition_results=[{'kind':'account_role','expected':role,'actual':'Unavailable','status':'missing','reason':reason,'observed_step':0}]
+        agent.starting_condition_results=[{'kind':'account_role','expected':role or 'account','actual':'Unavailable','status':'missing','reason':reason,'observed_step':0}]
         agent.history.append({'step':0,'elapsed_ms':agent.elapsed_ms(),'operation':'CHECK_STARTING_CONDITIONS','starting_condition_results':agent.starting_condition_results,'screenshot':None})
         return ctx.finish('Blocked','Starting conditions blocked: '+reason,None)
 

@@ -156,7 +156,7 @@ def setup_needed(preconditions: Any) -> str:
 
 def declares_setup(starting_conditions: Any, execution: Any) -> bool:
     conditions = starting_conditions or {}
-    return bool(conditions.get('account_role') or conditions.get('required_data') or conditions.get('account') or conditions.get('login_state', 'any') != 'any'
+    return bool(conditions.get('account_role') or conditions.get('account_username') or conditions.get('required_data') or conditions.get('account') or conditions.get('login_state', 'any') != 'any'
                 or any(action.get('operation') == 'REQUIRE' for action in (execution or {}).get('actions', [])))
 
 

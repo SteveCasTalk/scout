@@ -11,7 +11,7 @@ from scout_mobile.device import AndroidDevice, DeviceError
 from scout_mobile.execution_contract import validate_execution
 from scout_mobile.execution_runtime import AccountMismatch, ExecutionBlocked, ObservationIncomplete, PathNotReached, PrerequisiteMissing, Protocol, SelectorMissing, locate
 from scout_mobile.skill_import import check_against_run, draft_path, mark_explored, setup_needed
-from scout_mobile.starting_conditions import account_username, validate_starting_conditions
+from scout_mobile.starting_conditions import validate_account_username, validate_starting_conditions
 
 PKG = 'com.example.synthetic'
 SAVE = '<node class="Button" text="" clickable="{clickable}" enabled="{enabled}" bounds="[20,100][420,180]"><node class="Text" text="Save" bounds="[30,110][400,170]"/></node>'
@@ -53,12 +53,12 @@ class FakeDevice:
         path.write_bytes(b'')
 
 
-def run_actions(actions, *screens, role='', secrets=()):
+def run_actions(actions, *screens, role='', secrets=(), username='', run_username=''):
     capabilities = ['text_entry'] if any(a['operation'] in {'TYPE_TEXT', 'CLEAR_TEXT', 'SUBMIT'} for a in actions) else []
     with tempfile.TemporaryDirectory() as folder:
-        case = {'starting_conditions': {'account_role': role}, 'execution': {'required_capabilities': capabilities, 'actions': [{'package': PKG, **a} for a in actions]}}
+        case = {'starting_conditions': {'account_role': role, 'account_username': username}, 'execution': {'required_capabilities': capabilities, 'actions': [{'package': PKG, **a} for a in actions]}}
         with patch.dict('os.environ', {'SCOUT_ANDROID_DRIVER': 'adb'}):
-            agent = Agent(RunConfig(PKG, 'synthetic', case, Path(folder)))
+            agent = Agent(RunConfig(PKG, 'synthetic', case, Path(folder), account_username=run_username))
         agent.device = FakeDevice(*screens)
         agent.secrets = list(secrets)
         agent.screenshot = lambda screen, index: None
@@ -229,26 +229,38 @@ class RequireTests(unittest.TestCase):
         agent = run_actions([{'id': 'a', 'operation': 'REQUIRE', 'require_text': 'Drafts', 'reason': 'no draft'}], screen)
         self.assertTrue(agent.history[-1]['met'])
 
-    def test_account_is_verified_from_the_configured_username(self):
-        screen = parse('<node class="Text" text="@hilarious_dog" bounds="[0,0][100,100]"/>')
-        action = {'id': 'a', 'operation': 'REQUIRE', 'require_account': True, 'reason': 'owner must be signed in', 'timeout_ms': 100}
+    ACCOUNT = {'id': 'a', 'operation': 'REQUIRE', 'require_account': True, 'reason': 'owner must be signed in', 'timeout_ms': 100}
+    DOG = '<node class="Text" text="@hilarious_dog" bounds="[0,0][100,100]"/>'
+
+    def test_account_comes_from_the_test_case(self):
+        agent = run_actions([self.ACCOUNT], parse(self.DOG), role='owner', username='hilarious_dog')
+        self.assertEqual(agent.verified_account, {'role': 'owner', 'username': 'hilarious_dog', 'source': 'test case'})
+
+    def test_run_input_overrides_the_test_case(self):
+        agent = run_actions([self.ACCOUNT], parse(self.DOG), username='someone_else', run_username='hilarious_dog')
+        self.assertEqual((agent.verified_account['username'], agent.verified_account['source']), ('hilarious_dog', 'run input'))
+
+    def test_environment_is_not_an_account_source(self):
         with patch.dict('os.environ', {'SCOUT_ACCOUNT_OWNER_USERNAME': 'hilarious_dog'}):
-            agent = run_actions([action], screen, role='owner')
-        self.assertEqual(agent.verified_account, {'role': 'owner', 'username': 'hilarious_dog'})
+            agent = run_actions([], parse(self.DOG), role='owner')
+        self.assertEqual(agent.account_username, '')
 
     def test_wrong_account_blocks_and_never_verifies(self):
-        screen = parse('<node class="Text" text="@someone_else" bounds="[0,0][100,100]"/>')
-        action = {'id': 'a', 'operation': 'REQUIRE', 'require_account': True, 'reason': 'owner must be signed in', 'timeout_ms': 100}
-        with patch.dict('os.environ', {'SCOUT_ACCOUNT_OWNER_USERNAME': 'hilarious_dog'}):
-            with self.assertRaises(AccountMismatch):
-                run_actions([action], screen, role='owner')
+        with self.assertRaises(AccountMismatch):
+            run_actions([self.ACCOUNT], parse('<node class="Text" text="@someone_else" bounds="[0,0][100,100]"/>'), username='hilarious_dog')
 
-    def test_role_names_are_restricted_and_map_to_local_configuration(self):
+    def test_emails_and_spaces_are_refused(self):
+        for value in ('user@example.com', 'two words'):
+            with self.assertRaises(ValueError):
+                validate_account_username(value)
+            with self.assertRaises(ValueError):
+                validate_starting_conditions({'account_username': value})
+        self.assertEqual(validate_account_username(' @luna '), '@luna')
+
+    def test_role_names_are_restricted(self):
         self.assertEqual(validate_starting_conditions({'account_role': 'fan-member'})['account_role'], 'fan-member')
         with self.assertRaises(ValueError):
             validate_starting_conditions({'account_role': 'user@example.com'})
-        with patch.dict('os.environ', {'SCOUT_ACCOUNT_FAN_MEMBER_USERNAME': ' luna '}):
-            self.assertEqual(account_username('fan-member'), 'luna')
 
 
 class ReasonCodeTests(unittest.TestCase):
@@ -278,12 +290,13 @@ class ReasonCodeTests(unittest.TestCase):
 
 
 class AccountGuardTests(unittest.TestCase):
-    def run_guard(self, case, env):
+    def run_guard(self, case, run_username='', secrets=()):
         from scout_mobile.engine.nodes.setup import CheckAccountRole
         from scout_mobile.engine.node import RunContext
-        with tempfile.TemporaryDirectory() as folder, patch.dict('os.environ', {'SCOUT_ANDROID_DRIVER': 'adb', **env}):
-            agent = Agent(RunConfig(PKG, 'synthetic', case, Path(folder)))
+        with tempfile.TemporaryDirectory() as folder, patch.dict('os.environ', {'SCOUT_ANDROID_DRIVER': 'adb'}):
+            agent = Agent(RunConfig(PKG, 'synthetic', case, Path(folder), account_username=run_username))
             agent.device = None
+            agent.secrets = list(secrets)
             agent.capture_device_info = lambda: {}
             agent.capture_app_logs = lambda: ''
             out = CheckAccountRole().run(RunContext(agent))
@@ -291,18 +304,25 @@ class AccountGuardTests(unittest.TestCase):
 
     REQUIRE = {'execution': {'actions': [{'id': 'a', 'operation': 'REQUIRE', 'package': PKG, 'require_account': True, 'reason': 'x'}]}}
 
-    def test_unconfigured_role_blocks_without_touching_the_device(self):
-        result = self.run_guard({'starting_conditions': {'account_role': 'premium'}, **self.REQUIRE}, {'SCOUT_ACCOUNT_PREMIUM_USERNAME': ''})
-        self.assertEqual((result['status'], result['reason_code']), ('Blocked', 'account_not_configured'))
-        self.assertIn('premium', result['notes'])
+    def test_needed_account_without_a_username_blocks_without_touching_the_device(self):
+        for case in ({'starting_conditions': {'account_role': 'premium'}, **self.REQUIRE}, self.REQUIRE):
+            result = self.run_guard(case)
+            self.assertEqual((result['status'], result['reason_code']), ('Blocked', 'account_not_configured'))
+            self.assertIn('starting the run', result['notes'])
 
-    def test_role_with_nothing_to_verify_it_blocks(self):
-        result = self.run_guard({'starting_conditions': {'account_role': 'owner'}}, {'SCOUT_ACCOUNT_OWNER_USERNAME': 'dog'})
-        self.assertEqual(result['reason_code'], 'account_unverifiable')
+    def test_run_input_satisfies_a_needed_account(self):
+        self.assertIsNone(self.run_guard({'starting_conditions': {'account_role': 'premium'}, **self.REQUIRE}, 'luna'))
 
-    def test_configured_role_and_no_role_continue(self):
-        self.assertIsNone(self.run_guard({'starting_conditions': {'account_role': 'owner'}, **self.REQUIRE}, {'SCOUT_ACCOUNT_OWNER_USERNAME': 'dog'}))
-        self.assertIsNone(self.run_guard({}, {}))
+    def test_username_with_nothing_to_verify_it_blocks(self):
+        self.assertEqual(self.run_guard({'starting_conditions': {'account_username': 'dog'}})['reason_code'], 'account_unverifiable')
+
+    def test_username_cannot_be_a_credential(self):
+        result = self.run_guard({'starting_conditions': {'account_username': 'dog'}, **self.REQUIRE}, secrets=['dog'])
+        self.assertEqual(result['reason_code'], 'account_not_configured')
+
+    def test_configured_case_and_no_account_continue(self):
+        self.assertIsNone(self.run_guard({'starting_conditions': {'account_username': 'dog'}, **self.REQUIRE}))
+        self.assertIsNone(self.run_guard({}))
 
 
 class RestartAppTests(unittest.TestCase):
@@ -348,6 +368,68 @@ class RestartAppTests(unittest.TestCase):
     def test_cases_cannot_send_raw_commands(self):
         with self.assertRaises(ValueError):
             validate_execution({'actions': [{'id': 'a', 'operation': 'SHELL', 'package': PKG}]})
+
+
+class AppiumTextEntryTests(unittest.TestCase):
+    """The driver's clear can silently do nothing, which used to append new text to the old."""
+    def device(self, clear_works=True):
+        from scout_mobile.appium_device import AppiumAndroidDevice
+        device = AppiumAndroidDevice('synthetic')
+        state = {'value': 'Old caption', 'clears': 0}
+        def clear(_):
+            state['clears'] += 1
+            if clear_works:
+                state['value'] = ''
+        def send(_, value):
+            state['value'] += value
+        target = type('Target', (), {'clear': clear, 'send_keys': send})()
+        device.state = state
+        device._element = lambda element: target
+        device._call = lambda action: action(None)
+        device.observe = lambda: parse(BOX.format(value=state['value']))
+        device.tap = lambda element, screen=None: None
+        device.command = lambda *args, **kwargs: None
+        def keys(count):
+            state['keys'] = True
+            state['value'] = ''
+        device._clear_focused_field = keys
+        return device
+
+    def field(self):
+        return next(e for e in edit_screen().elements if e.role == 'textbox')
+
+    def run_with_clock(self, action):
+        clock = iter(range(0, 10000, 1))
+        with patch('time.sleep'), patch('time.monotonic', lambda: next(clock)):
+            return action()
+
+    def test_text_replaces_the_old_value(self):
+        device = self.device()
+        self.run_with_clock(lambda: device.type_text(self.field(), 'Hello'))
+        self.assertEqual(device.state['value'], 'Hello')
+        self.assertEqual(device.last_text_entry, {'clear': 'appium'})
+
+    def test_ignored_clear_falls_back_to_key_events_instead_of_appending(self):
+        device = self.device(clear_works=False)
+        self.run_with_clock(lambda: device.type_text(self.field(), 'Hello'))
+        self.assertEqual(device.state['value'], 'Hello')
+        self.assertEqual((device.state['clears'], device.last_text_entry), (2, {'clear': 'adb'}))
+
+    def test_field_that_cannot_be_cleared_is_never_typed_into(self):
+        device = self.device(clear_works=False)
+        device._clear_focused_field = lambda count: None
+        with self.assertRaisesRegex(DeviceError, 'kept its previous text'):
+            self.run_with_clock(lambda: device.type_text(self.field(), 'Hello'))
+        self.assertEqual(device.state['value'], 'Old caption')
+
+    def test_failure_reports_lengths_but_not_the_text(self):
+        device = self.device()
+        target = device._element(None)
+        type(target).send_keys = lambda _, value: device.state.update(value='Hel')
+        with self.assertRaises(DeviceError) as raised:
+            self.run_with_clock(lambda: device.type_text(self.field(), 'Hello'))
+        self.assertNotIn('Hello', str(raised.exception))
+        self.assertIn('[3]', str(raised.exception))
 
 
 class WaitForControlTests(unittest.TestCase):
@@ -435,7 +517,7 @@ class SetupFlagTests(unittest.TestCase):
     def test_explored_case_must_enforce_named_setup(self):
         with self.assertRaisesRegex(ValueError, 'nothing enforces'):
             mark_explored(self.saved(), 'run-1')
-        mark_explored(self.saved(), 'run-1', starting_conditions={'account_role': 'owner'})
+        mark_explored(self.saved(), 'run-1', starting_conditions={'account_username': 'owner'})
         mark_explored(self.saved(), 'run-1', execution={'actions': [{'operation': 'REQUIRE'}]})
         mark_explored(self.saved('Video list is open'), 'run-1')
 

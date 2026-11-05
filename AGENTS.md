@@ -64,9 +64,10 @@ mobile testing workflow for this repository.
   `mark_generated_case_explored`, including starting conditions and `control_state` or
   exact-text checkpoints observed in that run.
 - Enforce a case's account and test data instead of leaving them in preconditions. Use
-  `account_role` with a `REQUIRE` `require_account` step, and `REQUIRE` steps for data, so
-  missing setup ends as Blocked with a `reason_code`. Report that as a setup blocker. Keep
-  usernames and credentials in local `.env`, and never type credentials through `TYPE_TEXT`.
+  `account_username` on the case, or the username the user gave for the run, with a `REQUIRE`
+  `require_account` step, and `REQUIRE` steps for data, so missing setup ends as Blocked with a
+  `reason_code`. Report that as a setup blocker. Keep emails and passwords in the local provider,
+  and never type credentials through `TYPE_TEXT`.
 - Read `get_test_case_template` before defining a case. Map acceptance criteria
   to observable checkpoints with unique `id`, `expected`, `scope`, `required`,
   and `method` fields; use at most 12 checkpoints and at least one required.

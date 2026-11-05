@@ -17,7 +17,7 @@ from .device import AndroidDevice, DeviceError, Element, Screen
 from .model import ModelError, choose, field_text
 from .checkpoints import validate_checkpoints, evaluate as evaluate_checkpoints
 from .skill_import import run_note
-from .starting_conditions import validate_starting_conditions, check_starting_conditions
+from .starting_conditions import validate_account_username, validate_starting_conditions, check_starting_conditions
 from .execution_contract import check_support, validate_authorizations, fingerprint
 from .execution_runtime import Boundary, Protocol, ExecutionBlocked, ObservationIncomplete
 from .capabilities import BUILD_IDENTITY
@@ -48,6 +48,7 @@ class RunConfig:
     appium_url:str=''
     platform:str=''
     authorizations:dict[str,Any]|None=None
+    account_username:str=''
 
 class Agent:
     def __init__(self,config:RunConfig):
@@ -80,6 +81,10 @@ class Agent:
         self.starting_conditions=validate_starting_conditions(config.test_case.get('starting_conditions'))
         self.starting_condition_results=[]
         self.stop_code=None
+        # The run's input wins over the case, so one case can run against a chosen account.
+        run_username=validate_account_username(config.account_username)
+        self.account_username=run_username or self.starting_conditions['account_username']
+        self.account_source='run input' if run_username else 'test case' if self.account_username else ''
         self.verified_account=None
         self.checkpoint_observations=[]
         self.checkpoint_verdicts={item['id']:{**item,'verdict':'not_reached','confidence':0.0,'reason':'Checkpoint has not been evaluated.','evidence_steps':[],'observed':''} for item in self.checkpoints}
@@ -349,7 +354,7 @@ class Agent:
                 reason+=' Sandbox evidence incomplete: required rule hits missing or proxy requests blocked. This does not establish an app bug.'
         reason+=run_note(status,case.get('preconditions'))
         reason_code=self.reason_code(status,reason)
-        if self.verified_account:reason+=f" Verified account: {self.verified_account['role']} ({self.verified_account['username']})."
+        if self.verified_account:reason+=f" Verified account: {self.verified_account['username']} (from {self.verified_account['source']})."
         if status!='Passed':reason+=f' Reason code: {reason_code}.'
         device_info=self.capture_device_info()
         result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'starting_conditions':self.redact_object(self.starting_conditions),'starting_condition_results':self.redact_object(self.starting_condition_results),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Scout iOS runner' if self.platform=='iOS' else 'Scout Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':self.platform,'device':self.config.serial,'build':device_info.get('app_version','unknown'),'device_info':device_info,'app_logs':self.capture_app_logs(),'status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False,'reason_code':reason_code,'verified_account':self.verified_account}

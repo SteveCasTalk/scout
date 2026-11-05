@@ -10,7 +10,6 @@ from .device import BOUNDS, DeviceError, Element
 from .execution_contract import Selector
 from .model import is_credential_field
 from .safety import PRIVATE_CODE_FIELD
-from .starting_conditions import account_username
 from .temporal import TemporalState
 
 class ExecutionBlocked(DeviceError):pass
@@ -150,8 +149,8 @@ class Protocol:
             time.sleep(.1)
     def require(self,action):
         """A missing prerequisite ends the run as Blocked; it says nothing about the app."""
-        a=self.a;role=a.starting_conditions['account_role']
-        expected=account_username(role) if action['require_account'] else action['require_text']
+        a=self.a;role=a.starting_conditions['account_role'] or a.account_username
+        expected=a.account_username if action['require_account'] else action['require_text']
         absent=action['require_absent']
         deadline=time.monotonic()+action['timeout_ms']/1000
         while True:
@@ -160,10 +159,10 @@ class Protocol:
             if (seen.strip() and absent.casefold() not in seen) if absent else (expected and expected.casefold() in seen):break
             if time.monotonic()>=deadline:
                 a.history.append({'step':len(a.history),'operation':'REQUIRE','action_id':action['id'],'label':a.redact(action['reason']),'met':False,'screen':a.public_screen(screen),'screenshot':a.screenshot(screen,len(a.history)),'elapsed_ms':a.elapsed_ms()})
-                if action['require_account']:raise AccountMismatch(f'Account role "{role}" is not signed in: {a.redact(action["reason"])}')
+                if action['require_account']:raise AccountMismatch(f'Account "{a.account_username}" is not signed in: {a.redact(action["reason"])}')
                 raise PrerequisiteMissing('Prerequisite not established: '+a.redact(action['reason']))
             time.sleep(.2)
-        if action['require_account']:a.verified_account={'role':role,'username':expected}
+        if action['require_account']:a.verified_account={'role':role,'username':expected,'source':a.account_source}
         a.history.append({'step':len(a.history),'operation':'REQUIRE','action_id':action['id'],'label':a.redact(action['reason']),'met':True,'screen':a.public_screen(screen),'screenshot':a.screenshot(screen,len(a.history)),'elapsed_ms':a.elapsed_ms()})
         return screen
     def run_action(self,action):
@@ -214,6 +213,7 @@ class Protocol:
         elif op=='BACK':a.device.back()
         elif op=='TYPE_TEXT':
             a.device.type_text(element,action['text']);record['text']=a.redact(action['text'])
+            record['text_entry']=getattr(a.device,'last_text_entry',None)
             # Device adapters compare trimmed values, so confirm whitespace the case depends on from the raw hierarchy.
             fresh,_=self.observe()
             if not any('EditText' in node.get('class','') and node.get('text','')==action['text'] for node in ET.fromstring(fresh.xml).iter()):

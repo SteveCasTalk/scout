@@ -212,6 +212,7 @@ def run_mobile_test(
     max_steps: int = 40,
     adb: str | None = None,
     authorizations: dict[str, Any] | None = None,
+    account_username: str = "",
 ) -> dict[str, Any]:
     """Run an exported Android or iOS test with Jev and verify expected visible text. If ordinary text is needed, call `enter_text` with the returned run_id and a user-authorized value.
 
@@ -249,6 +250,7 @@ def run_mobile_test(
             serial=device_serial,
             test_case=case,
             authorizations=authorizations,
+            account_username=account_username,
             output=output,
             adb=adb_path,
             max_steps=max_steps,
@@ -279,7 +281,8 @@ class StartingConditionsInput(BaseModel):
     login_state: Literal['any', 'signed_in', 'signed_out'] = 'any'
     app_version: str = Field(default='', max_length=120, description='Exact installed app version.')
     required_data: list[str] = Field(default_factory=list, max_length=8, description='Text values visible on the opening app screen.')
-    account_role: str = Field(default='', pattern=r'^[a-z0-9_-]{0,40}$', description='Named test account role. The runner reads its username from SCOUT_ACCOUNT_<ROLE>_USERNAME, and a REQUIRE action with require_account must verify it on screen.')
+    account_role: str = Field(default='', pattern=r'^[a-z0-9_-]{0,40}$', description='Label for the kind of account this case needs. A run without a username is Blocked, and a REQUIRE action with require_account must verify it on screen.')
+    account_username: str = Field(default='', max_length=161, description='Visible username this case needs. A username given when starting the run overrides it. Never an email or password.')
 
 
 @mcp.tool()
@@ -1094,13 +1097,15 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
                    conditions_confirmed: bool = False, expected_revision: int | None = None,
                    start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
                    allow_consent: bool = False, request_id: str | None = None,
-                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
+                    authorizations: dict[str, Any] | None = None, account_username: str = '') -> dict[str, Any]:
     """Start a saved case asynchronously on an explicitly selected device.
     Read its definition and prerequisites first; confirm preparation, never invent
     evidence that conditions are met. Device preflight can still return Blocked.
     expected_revision rejects concurrent edits before execution; the accepted
     revision and sandbox are pinned. Relaunch preserves login/app data. Legal or
     permission consent requires explicit human authorization; default is false.
+    account_username is the visible username to verify for this run, and overrides the
+    case's. Use the one the user gave; never pass an email or password.
     Returns session_id; poll get_run_progress, use enter_text(session_id) only
     for user-authorized ordinary input, and stop_run to stop. Results/evidence sync
     to the local dashboard; sync errors retain local files for retry.
@@ -1114,7 +1119,7 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':case['id'],'revision':case['revision']}],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username},request_id)
 
 
 @mcp.tool()
@@ -1123,7 +1128,7 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
                     conditions_confirmed: bool = False, case_ids: list[str] | None = None,
                     start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
                     allow_consent: bool = False, request_id: str | None = None,
-                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
+                    authorizations: dict[str, Any] | None = None, account_username: str = '') -> dict[str, Any]:
     """Start a sequential regression of up to 100 saved cases from one suite.
     Read definitions and confirm prerequisites, including that later cases can
     follow earlier ones. Optional case_ids selects a subset in that exact order;
@@ -1165,7 +1170,7 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':c['id'],'revision':c['revision']} for c in chosen],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username},request_id)
 
 
 @mcp.tool()

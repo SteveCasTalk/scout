@@ -10,6 +10,7 @@ from .evidence import inventory as evidence_inventory
 from .config import ROOT,getenv
 from .devices import connected
 from .execution_contract import check_support, validate_authorizations
+from .starting_conditions import validate_account_username
 from .capabilities import capabilities, negotiate_case
 
 JOBS: dict[str, dict] = {}
@@ -60,6 +61,7 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
     execution=check_support(case,case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium')
     negotiate_case(case,execution,payload.get('client_capabilities'))
     grants=validate_authorizations(payload.get('authorizations'),execution)
+    validate_account_username(payload.get('account_username') or '')
     serial = payload.get('serial')
     adb = getenv('ADB_PATH') or 'adb'
     if not isinstance(serial, str) or serial not in connected(case['platform'], adb):
@@ -106,7 +108,7 @@ def start(payload: dict, run_lock: threading.Lock) -> str:
                     JOBS[job_id]['checkpoint_results'] = list(agent.checkpoint_verdicts.values()) if agent else []
                     JOBS[job_id]['starting_condition_results'] = list(agent.starting_condition_results) if agent else []
             job = JOBS[job_id]
-            agent = Agent(RunConfig(package, serial, case, output, adb, steps, 600, str(case.get('assertion_text', '')), allow_consent=allow_consent, mcp_host_text=True, on_progress=progress, should_stop=job['_stop'].is_set,authorizations=grants))
+            agent = Agent(RunConfig(package, serial, case, output, adb, steps, 600, str(case.get('assertion_text', '')), allow_consent=allow_consent, mcp_host_text=True, on_progress=progress, should_stop=job['_stop'].is_set,authorizations=grants,account_username=str(payload.get('account_username') or '')))
             agent.lease.acquire()
             agent.lease_managed=True
             if mode == 'relaunch':
