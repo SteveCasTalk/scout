@@ -19,7 +19,7 @@ LAYERS:tuple[tuple[str,str,tuple[str,...]],...]=(
     ('engine','Run orchestration: the node pipeline, the run session, leases, lifecycle, capabilities.',
      ('engine','agent','execution_runtime','lifecycle','device_lease','capabilities')),
     ('application','Job and session management, dashboard sync.',
-     ('dashboard_client','dashboard_runtime','dashboard_jobs','library_sessions')),
+     ('dashboard_client','dashboard_runtime','dashboard_jobs','library_sessions','project_report')),
     ('interfaces','Entry points: CLI, MCP server, local device bridge.',
      ('__main__','__init__','mcp_server','local_server')),
 )

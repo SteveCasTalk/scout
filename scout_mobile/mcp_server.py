@@ -9,8 +9,10 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import subprocess
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock, RLock
 import zipfile
 from io import BytesIO
@@ -36,7 +38,7 @@ from .execution_contract import decode_export, validate_execution
 from .capabilities import capabilities, diagnose
 
 
-from . import skill_import
+from . import project_report, skill_import
 mcp = FastMCP(PRODUCT_NAME, instructions=skill_import.INSTRUCTIONS)
 DEFAULT_PACKAGE = "com.wallet.walkthedog.uat"
 CASE_FIELDS = ("id", "revision", "goal", "steps", "expected")
@@ -1456,6 +1458,57 @@ def get_run_evidence(run_id: str, filename: str) -> dict[str, Any]:
         "encoding": "base64",
         "data": base64.b64encode(data).decode("ascii"),
     }
+
+
+@mcp.tool()
+def export_project_report(workspace_id: str, project: str, ticket_key: str | None = None, suite: str | None = None,
+                          include_screenshots: bool = True, return_html: bool = False) -> dict[str, Any]:
+    """Write a standalone HTML summary of a project's latest saved runs and return its path, status counts and the
+    cases needing attention. Optional ticket_key or suite narrows it. It reports saved results as they are and never
+    runs a test or changes a verdict; assistant review notes stay labelled. With return_html the page is also returned
+    inline, without screenshots, because they make it too large for a tool reply. Report 'Failed' as a possible bug.
+    """
+    uuid.UUID(workspace_id)
+    load_local_env()
+    items: list[dict[str, Any]] = []
+    cursor = None
+    while True:
+        page = list_test_cases(workspace_id, project=project, suite=suite, ticket_key=ticket_key, limit=50, cursor=cursor)
+        items += page['items']
+        cursor = page.get('next_cursor')
+        if not cursor:
+            break
+    if not items:
+        raise ValueError('No test cases match this project and filter.')
+    def load(item: dict[str, Any]) -> dict[str, Any]:
+        entry: dict[str, Any] = {'item': item, 'case': get_test_case(workspace_id, item['id'])['case']}
+        if item.get('latest_run_id'):
+            try:
+                entry['run'] = get_saved_run(workspace_id, item['latest_run_id'])
+            except Exception:  # One unreadable run must not lose the rest of the report.
+                entry['error'] = True
+        local = ((entry.get('run') or {}).get('run') or {}).get('external_run_id')
+        if include_screenshots and local:
+            try:
+                entry['image'] = project_report.thumbnail(_run_directory(str(local)))
+            except (ValueError, OSError, subprocess.SubprocessError):
+                entry['image'] = ''
+        return entry
+    with ThreadPoolExecutor(6) as pool:
+        entries = list(pool.map(load, items))
+    secrets = [getenv('SCOUT_TEST_EMAIL', ''), getenv('SCOUT_TEST_PASSWORD', '')]
+    title = ' · '.join(part for part in (project, ticket_key, suite) if part) + ' test report'
+    name = re.sub(r'[^a-z0-9]+', '-', ' '.join(part for part in (project, ticket_key, suite) if part).lower()).strip('-') or 'project'
+    output = ROOT / 'runner-output' / 'reports' / f'{name}-report.html'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    document = project_report.render(title, entries, secrets)
+    output.write_text(document, encoding='utf-8')
+    result = {'path': str(output), 'size_bytes': output.stat().st_size, 'screenshots': sum(1 for entry in entries if entry.get('image')), **project_report.summary(entries)}
+    if include_screenshots and result['screenshots'] == 0:
+        result['screenshots_note'] = 'No screenshots were embedded. Thumbnails need saved local runs and the macOS sips tool.'
+    if return_html:
+        result['html'] = project_report.render(title, [{**entry, 'image': ''} for entry in entries], secrets)
+    return result
 
 
 @mcp.tool()

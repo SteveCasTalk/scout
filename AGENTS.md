@@ -98,7 +98,8 @@ mobile testing workflow for this repository.
   an identical retry and a fresh ID for an intentional new execution.
 - Use `prepare_run_verification`, inspect the referenced safe screenshots,
   then `record_run_verification` for an independent assessment. Export evidence
-  with `list_run_evidence`, `get_run_evidence`, or `export_run_evidence_bundle`.
+  with `list_run_evidence`, `get_run_evidence`, or `export_run_evidence_bundle`. Use
+  `export_project_report` when the user asks for an HTML summary of a project.
   Repair saved-run sync failures with `sync_run_result` without rerunning actions.
 
 ## Network fixtures and scenario variants
