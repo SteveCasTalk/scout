@@ -337,6 +337,28 @@ fallbacks. Appium supports these actions on Android; ADB declines the combined
 native gesture/burst requirements. Android execution/lifecycle additions are not
 advertised for iOS. Existing iOS and Android aliases remain available.
 
+`TYPE_TEXT`, `CLEAR_TEXT` and `SUBMIT` need `text_entry`. Give `SUBMIT` the field's selector,
+because Enter only reaches a focused field and Appium can type without focusing it. Typed text is ordinary case data:
+credential and private-code fields and locally configured credentials are refused, and the
+field must then hold exactly that text. A selector may use `text_starts_with`, or an
+`EditText` `class_name` alone. `appear_ms` waits for a control that is briefly covered, and
+`optional` skips a `TAP` whose control does not appear. `REQUIRE` (`require_text`,
+`require_absent` or `require_account`, plus `reason`) ends the run as Blocked, naming what is
+missing, so absent test data or the wrong account never reads as an app result.
+
+Starting condition `account_role` names a test account. Scout reads its username from
+`SCOUT_ACCOUNT_<ROLE>_USERNAME` in local `.env`; a missing role is Blocked before any device
+action, and the case needs a `REQUIRE` with `require_account` to verify it on screen. Roles are
+verified, not signed in, so sign the right account in on the device first.
+
+The `control_state` checkpoint method checks one control by exact label in `expected`, with
+`state` set to `enabled`, `disabled`, `checked` or `unchecked`, without a model.
+
+Every result has a `reason_code`: `verified`, `assertion_violated`, `runner_error`,
+`execution_blocked`, `selector_missing`, `prerequisite_missing`, `account_not_configured`,
+`account_unverifiable`, `account_mismatch`, `path_not_reached`, `model_unsure`,
+`not_observable`, `evidence_incomplete` or `cleanup_failed`. Non-passing runs repeat it in `notes`.
+
 `finish="verify"` runs the typed sequence and evaluates its evidence;
 `finish="model"` resumes existing model navigation after the typed sequence.
 Purchase entry always uses `verify`, with only observation or a declared safe return
@@ -453,12 +475,16 @@ Only LIVE rows with a settled result are saved. MOCK, STORE, BE, MANUAL, DEV, TB
 pending-contract rows return under `held` with the reason; malformed rows return
 under `rejected`. Starting conditions stay at their defaults because the app's opening screen often
 cannot prove them, such as login on a Home feed, which would falsely block the case.
-Set them with `mark_generated_case_explored` where they are observable. Steps come from the
+Rows whose preconditions name an account or test data are listed under `setup_required`,
+and `mark_generated_case_explored` refuses them until an `account_role`, `required_data`,
+`login_state` or `REQUIRE` step enforces that. Steps come from the
 spec, so `steps_verified` is always false. Until a case is explored, its Failed and
 Inconclusive runs carry a review note in `notes`.
 
-After a bounded exploration run, call `mark_generated_case_explored(workspace_id,
-case_id, expected_revision, exploration_run_id, steps=None, starting_conditions=None,
+After a bounded exploration run, call `draft_typed_path(exploration_run_id, texts=None)`
+to turn its path into a typed execution for review. Then call
+`mark_generated_case_explored(workspace_id, case_id, expected_revision,
+exploration_run_id, steps=None, starting_conditions=None, execution=None,
 checkpoints=None)`. It requires a local run for the same app and platform, and records
 corrected steps, the real starting conditions and replacement checkpoints. It trusts the
 caller to have inspected that run and to keep each acceptance criterion covered.

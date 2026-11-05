@@ -8,10 +8,17 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from .device import BOUNDS, DeviceError, Element
 from .execution_contract import Selector
+from .model import is_credential_field
+from .safety import PRIVATE_CODE_FIELD
+from .starting_conditions import account_username
 from .temporal import TemporalState
 
 class ExecutionBlocked(DeviceError):pass
 class ObservationIncomplete(DeviceError):pass
+class PathNotReached(ObservationIncomplete):code='path_not_reached'
+class SelectorMissing(ExecutionBlocked):code='selector_missing'
+class PrerequisiteMissing(ExecutionBlocked):code='prerequisite_missing'
+class AccountMismatch(ExecutionBlocked):code='account_mismatch'
 
 
 def locate(screen, selector, tap=False):
@@ -34,12 +41,12 @@ def locate(screen, selector, tap=False):
         label=a.get('text','').strip() or a.get('content-desc','').strip()
         cls=a.get('class',node.tag)
         actionable=a.get('clickable')=='true' or a.get('checkable')=='true'
-        if visible and all(not selector[k] or selector[k]==v for k,v in [('resource_id',a.get('resource-id','')),('text',label),('class_name',cls)]):
+        if visible and all(not selector[k] or selector[k]==v for k,v in [('resource_id',a.get('resource-id','')),('text',label),('class_name',cls)]) and label.startswith(selector['text_starts_with']):
             rect=onscreen(a)
             if rect:
                 if not tap or actionable:
                     matches.append(element(a,label,rect,actionable))
-                elif selector['text'] and not selector['resource_id'] and clickable_parent is not None:
+                elif (selector['text'] or selector['text_starts_with']) and not selector['resource_id'] and clickable_parent is not None:
                     # Observations label a clickable container with its child's text (e.g. a Button wrapping
                     # Text). Resolve that exact text to the container it labels; ambiguity is still rejected.
                     parent=clickable_parent.attrib;parent_rect=onscreen(parent)
@@ -47,12 +54,12 @@ def locate(screen, selector, tap=False):
         for child in node:visit(child,visible,node if actionable and visible else clickable_parent)
     visit(root)
     unique={(m.bounds,m.resource_id):m for m in matches}
-    if len(unique)!=1:raise ExecutionBlocked('Selector is missing, disabled, or ambiguous; no action dispatched.')
+    if len(unique)!=1:raise SelectorMissing('Selector is missing, disabled, or ambiguous; no action dispatched.')
     return next(iter(unique.values()))
 
 
 def selector_matches(element,selector):
-    return bool(element and all(not selector.get(k) or selector[k]==v for k,v in [('resource_id',element.resource_id),('text',element.label),('class_name',element.class_name)]))
+    return bool(element and all(not selector.get(k) or selector[k]==v for k,v in [('resource_id',element.resource_id),('text',element.label),('class_name',element.class_name)]) and element.label.startswith(selector.get('text_starts_with') or ''))
 
 class Boundary:
     def __init__(self,agent):
@@ -92,10 +99,18 @@ class Boundary:
         self.count+=1
 
 
+def check_text_entry(agent,element,text):
+    """Typed text is ordinary case data: never a credential, a private code or a credential field."""
+    if is_credential_field(element) or PRIVATE_CODE_FIELD.search(f'{element.label} {element.resource_id}'):
+        raise ExecutionBlocked('Typed actions cannot enter credentials or private codes.')
+    if any(secret and secret in text for secret in agent.secrets):
+        raise ExecutionBlocked('Typed text must not contain locally configured credentials.')
+
+
 def check_action(agent,operation,element,screen,purchase=False):
     from .safety import RISKY
     label=element.label if element else ''
-    if element and (element.password or element.role=='textbox'):
+    if element and (element.password or (element.role=='textbox' and operation not in {'TYPE_TEXT','CLEAR_TEXT','SUBMIT'})):
         raise ExecutionBlocked('Typed actions cannot enter credentials or arbitrary text.')
     if agent.consent_confirmation_required(label,screen.text) and not agent.config.allow_consent:
         raise ExecutionBlocked('Explicit consent authorization is required.')
@@ -131,13 +146,43 @@ class Protocol:
             # Kept for evidence when the wait fails: tells a wrong gesture apart from an app transition.
             self.last_wait_screen=screen
             if (not package or current==package) and text.casefold() in screen.text.casefold():return screen
-            if time.monotonic()>=deadline:raise ObservationIncomplete('Expected screen was not established within the bounded wait.')
+            if time.monotonic()>=deadline:raise PathNotReached('Expected screen was not established within the bounded wait.')
             time.sleep(.1)
+    def require(self,action):
+        """A missing prerequisite ends the run as Blocked; it says nothing about the app."""
+        a=self.a;role=a.starting_conditions['account_role']
+        expected=account_username(role) if action['require_account'] else action['require_text']
+        absent=action['require_absent']
+        deadline=time.monotonic()+action['timeout_ms']/1000
+        while True:
+            screen,_=self.observe()
+            seen=' '.join([screen.text,*[e.label for e in screen.elements]]).casefold()
+            if (seen.strip() and absent.casefold() not in seen) if absent else (expected and expected.casefold() in seen):break
+            if time.monotonic()>=deadline:
+                a.history.append({'step':len(a.history),'operation':'REQUIRE','action_id':action['id'],'label':a.redact(action['reason']),'met':False,'screen':a.public_screen(screen),'screenshot':a.screenshot(screen,len(a.history)),'elapsed_ms':a.elapsed_ms()})
+                if action['require_account']:raise AccountMismatch(f'Account role "{role}" is not signed in: {a.redact(action["reason"])}')
+                raise PrerequisiteMissing('Prerequisite not established: '+a.redact(action['reason']))
+            time.sleep(.2)
+        if action['require_account']:a.verified_account={'role':role,'username':expected}
+        a.history.append({'step':len(a.history),'operation':'REQUIRE','action_id':action['id'],'label':a.redact(action['reason']),'met':True,'screen':a.public_screen(screen),'screenshot':a.screenshot(screen,len(a.history)),'elapsed_ms':a.elapsed_ms()})
+        return screen
     def run_action(self,action):
         a=self.a
+        if action['operation']=='REQUIRE':return self.require(action)
         screen,package=self.observe()
         if package!=action['package']:raise ExecutionBlocked('Action package does not match fresh foreground.')
         op=action['operation'];element=None;destination=None;entry=None
+        if action['optional'] or action['appear_ms']:
+            deadline=time.monotonic()+(action['timeout_ms'] if action['optional'] else action['appear_ms'])/1000
+            while True:
+                try:
+                    locate(screen,action['selector'],tap=op in {'TAP','TAP_BURST'});break
+                except SelectorMissing:
+                    if time.monotonic()>=deadline:
+                        if not action['optional']:raise
+                        a.history.append({'step':len(a.history),'operation':op,'action_id':action['id'],'skipped':True,'elapsed_ms':a.elapsed_ms()})
+                        return screen
+                    time.sleep(.2);screen,package=self.observe()
         if op=='PURCHASE_ENTRY':
             entry=next(e for e in self.spec['purchase_entries'] if e['id']==action['entry_id'])
             if package!=a.config.package or entry['id'] not in a.authorizations['purchase_entries'] or entry['id'] in self.consumed:
@@ -149,6 +194,11 @@ class Protocol:
         elif action['selector']:
             element=locate(screen,action['selector'],tap=op in {'TAP','TAP_BURST'})
         if action['destination']:destination=locate(screen,action['destination'])
+        if op in {'TYPE_TEXT','CLEAR_TEXT'} or (op=='SUBMIT' and element):
+            # The observed field carries the current value and focus that typing needs.
+            element=next((e for e in screen.elements if e.role=='textbox' and e.bounds==element.bounds),None)
+            if element is None:raise SelectorMissing('The selected control is not an observed text field; no action dispatched.')
+            check_text_entry(a,element,action['text'])
         check_action(a,'TAP' if entry else op,element,screen,purchase=bool(entry))
         if destination:check_action(a,'DRAG',destination,screen)
         index=len(a.history)
@@ -162,6 +212,18 @@ class Protocol:
         record['dispatch_start_ms']=a.elapsed_ms()
         if op in {'TAP','PURCHASE_ENTRY'}:a.device.tap(element,screen)
         elif op=='BACK':a.device.back()
+        elif op=='TYPE_TEXT':
+            a.device.type_text(element,action['text']);record['text']=a.redact(action['text'])
+            # Device adapters compare trimmed values, so confirm whitespace the case depends on from the raw hierarchy.
+            fresh,_=self.observe()
+            if not any('EditText' in node.get('class','') and node.get('text','')==action['text'] for node in ET.fromstring(fresh.xml).iter()):
+                raise ObservationIncomplete('The text field does not hold exactly the requested text.')
+        elif op=='CLEAR_TEXT':a.device.clear_text(element)
+        elif op=='SUBMIT':
+            # Enter only reaches a focused field, and an adapter may type without focusing it.
+            if element and not element.focused:
+                a.device.tap(element,screen);time.sleep(.5)
+            a.device.press_enter()
         elif op=='SWIPE':
             x1,y1,x2,y2=element.bounds;cx,cy=element.center
             # travel = [start, end] as fractions along the swipe axis, measured from the side the finger starts on

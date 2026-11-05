@@ -103,7 +103,7 @@ class ConvertTest(unittest.TestCase):
             si.mark_explored({'preconditions': 'Ordinary case'}, 'run-2')
 
     def test_mark_explored_replaces_checkpoints_only_when_given(self):
-        saved = {**convert()['definition'], 'revision': 2}
+        saved = {**convert()['definition'], 'revision': 2, 'starting_conditions': {'account_role': 'member'}}
         checks = [{'id': 'a', 'expected': 'Caption updated', 'scope': 'final', 'required': True, 'method': 'text_present'}]
         self.assertEqual(si.mark_explored(saved, 'run-1', checkpoints=checks)['checkpoints'], checks)
         self.assertEqual(si.mark_explored(saved, 'run-1')['checkpoints'], saved['checkpoints'])

@@ -55,7 +55,8 @@
           "selector": {
             "resource_id": "",
             "text": "Synthetic message",
-            "class_name": ""
+            "class_name": "",
+            "text_starts_with": ""
           },
           "destination": null,
           "entry_id": "",
@@ -70,7 +71,14 @@
           "travel": [
             0.85,
             0.15
-          ]
+          ],
+          "text": "",
+          "optional": false,
+          "require_text": "",
+          "require_account": false,
+          "reason": "",
+          "appear_ms": 0,
+          "require_absent": ""
         }
       ],
       "temporal_assertions": [],

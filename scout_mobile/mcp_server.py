@@ -268,7 +268,8 @@ class CheckpointInput(BaseModel):
     expected: str = Field(min_length=1, max_length=1000, description='Observable expectation, or literal text for text methods.')
     scope: Literal['during_run', 'final'] = Field(description='At least once during execution, or only the final observation.')
     required: bool = Field(description='Whether this checkpoint must be satisfied for the case to pass.')
-    method: Literal['classification', 'text_present', 'text_absent']
+    method: Literal['classification', 'text_present', 'text_absent', 'control_state']
+    state: Literal['enabled', 'disabled', 'checked', 'unchecked'] | None = Field(default=None, description='control_state only: required state of the control whose exact label is in expected.')
 
 
 class StartingConditionsInput(BaseModel):
@@ -278,6 +279,7 @@ class StartingConditionsInput(BaseModel):
     login_state: Literal['any', 'signed_in', 'signed_out'] = 'any'
     app_version: str = Field(default='', max_length=120, description='Exact installed app version.')
     required_data: list[str] = Field(default_factory=list, max_length=8, description='Text values visible on the opening app screen.')
+    account_role: str = Field(default='', pattern=r'^[a-z0-9_-]{0,40}$', description='Named test account role. The runner reads its username from SCOUT_ACCOUNT_<ROLE>_USERNAME, and a REQUIRE action with require_account must verify it on screen.')
 
 
 @mcp.tool()
@@ -293,6 +295,8 @@ def get_test_case_template() -> dict[str, Any]:
             "during_run means observed at least once; final means final observation only. Neither means always true.",
             "classification uses screen text and accessibility control states, not pixels or backend access.",
             "text_present/text_absent perform case-insensitive substring checks; avoid generic words.",
+            "control_state checks one control by exact label (state enabled/disabled/checked/unchecked) without a model; prefer it over classification for on/off controls.",
+            "A REQUIRE execution action ends the run as Blocked, naming what is missing, when test data or the account_role is not established.",
             "Missing text on the wrong screen does not establish a bug. Use contextual classification when needed.",
             "Do not claim UI evidence proves backend-only or visual-pixel requirements.",
             "Include user-approved ordinary input in steps. Keep credentials in local configuration.",
@@ -715,6 +719,7 @@ def import_generated_test_cases(workspace_id: str, platform: Literal['Android','
     items, unchanged = skill_import.build_items(workspace_id, plan['ready'], existing, lambda case_id: client.library(action='case', workspace=workspace_id, case_id=case_id)['case'])
     entries = {skill_import.tc_id_of(item['case']['title']): item for item in items}
     warnings = {entry['tc_id']: entry['warnings'] for entry in plan['ready']}
+    setup_required = {entry['tc_id']: named for entry in plan['ready'] if (named := skill_import.setup_needed(entry['definition'].get('preconditions')))}
     results = []
     for batch in skill_import.batches(items):
         response = _author_cases(workspace_id, batch, dry_run)
@@ -724,12 +729,27 @@ def import_generated_test_cases(workspace_id: str, platform: Literal['Android','
     held = [{**entry, 'saved_case_id': existing[entry['tc_id']]['id']} if entry['tc_id'] in existing else entry for entry in plan['held']]
     return {'dry_run': dry_run, 'execution_started': False, 'steps_verified': False,
             'counts': {'to_save': len(results), 'unchanged': len(unchanged), 'held': len(held), 'rejected': len(plan['rejected'])},
-            'results': results, 'unchanged': unchanged, 'held': held, 'rejected': plan['rejected'],
+            'results': results, 'unchanged': unchanged, 'held': held, 'rejected': plan['rejected'], 'setup_required': setup_required,
             'note': 'Steps come from the spec. Explore the path before trusting a failure as an app bug.'}
 
 
 @mcp.tool()
-def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None, checkpoints: list[CheckpointInput] | None = None) -> dict[str, Any]:
+def draft_typed_path(exploration_run_id: str, texts: list[str] | None = None) -> dict[str, Any]:
+    """Turn a local exploration run into a typed execution to review. Pass the text typed in the run, in order, because
+    traces do not record it. Steps it cannot express are listed under unsupported, never guessed. Never executes; review
+    it, add REQUIRE steps for the case's account and test data, then save it with mark_generated_case_explored.
+    """
+    directory = _run_directory(exploration_run_id)
+    if not (directory / "result.json").is_file() or not (directory / "trace.json").is_file():
+        raise ValueError("Exploration run has no result yet.")
+    run = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+    if run.get('platform') != 'Android':
+        raise ValueError("Typed execution currently requires Android.")
+    return skill_import.draft_path(json.loads((directory / "trace.json").read_text(encoding="utf-8")), str(run.get('package')), texts)
+
+
+@mcp.tool()
+def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None, execution: dict[str, Any] | None = None, checkpoints: list[CheckpointInput] | None = None) -> dict[str, Any]:
     """Record that an imported case's path was confirmed by a real exploration run, with optional corrected steps,
     starting conditions and checkpoints. Removes the review note from its later non-passing runs. Inspect the run first;
     the run must exist locally for the same app and platform. Prefer exact-text checkpoints seen in that run, because a
@@ -752,7 +772,8 @@ def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revis
             raise ValueError("checkpoints must contain at least one required checkpoint.")
         trace = json.loads((directory / "trace.json").read_text(encoding="utf-8")) if (directory / "trace.json").is_file() else []
         skill_import.check_against_run(replacement, trace)
-    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions, replacement)
+    typed = None if execution is None else validate_execution(execution)
+    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions, replacement, typed)
     request_id = str(uuid.uuid5(skill_import.NAMESPACE, f'explored|{case_id}|{expected_revision}|{exploration_run_id}'))
     return _author_cases(workspace_id, [{'request_id': request_id, 'id': case_id, 'expected_revision': expected_revision, 'case': definition}])
 

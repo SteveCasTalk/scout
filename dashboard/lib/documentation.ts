@@ -105,6 +105,7 @@ export const documentation: DocSection[] = [
         ['during_run', 'An occurrence checkpoint. Retains its first supported satisfied/violated decision; it does not continuously enforce an invariant.'],
         ['final', 'Checks only the final observation, not every screen visited earlier.'],
         ['classification', 'Jev evaluates accessible text/control states and selects a verdict plus a supporting observed step. Both confidences must reach 0.85 for satisfied/violated.'],
+        ['control_state', 'Checks one control by exact label (enabled, disabled, checked or unchecked) without a model.'],
         ['text_present / text_absent', 'Case-insensitive substring checks on observed screen text. An empty/unavailable observation cannot establish absence.'],
         ['required', 'A required violation yields Failed; all required checkpoints satisfied yields Passed, subject to execution and network coverage checks.'],
         ['Legacy assertion', 'Cases without checkpoints can use the visible-text assertion fallback. It is a substring check, not exact equality with a screenshot.']

@@ -175,6 +175,13 @@ class AppiumAndroidDevice(AndroidDevice):
                     raise DeviceError('Appium text entry did not settle to the requested value.')
                 time.sleep(.2)
 
+    def clear_text(self, element: Element) -> None:
+        target = self._element(element)
+        self._call(lambda _: target.clear())
+
+    def press_enter(self) -> None:
+        self._call(lambda driver: driver.press_keycode(66))
+
     def swipe_coordinates(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int) -> None:
         self._call(lambda driver: driver.swipe(x1, y1, x2, y2, duration_ms))
 

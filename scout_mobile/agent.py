@@ -79,6 +79,8 @@ class Agent:
         self.checkpoints=validate_checkpoints(config.test_case.get('checkpoints', []))
         self.starting_conditions=validate_starting_conditions(config.test_case.get('starting_conditions'))
         self.starting_condition_results=[]
+        self.stop_code=None
+        self.verified_account=None
         self.checkpoint_observations=[]
         self.checkpoint_verdicts={item['id']:{**item,'verdict':'not_reached','confidence':0.0,'reason':'Checkpoint has not been evaluated.','evidence_steps':[],'observed':''} for item in self.checkpoints}
         self.started=time.monotonic()
@@ -346,13 +348,15 @@ class Agent:
                 status='Inconclusive'
                 reason+=' Sandbox evidence incomplete: required rule hits missing or proxy requests blocked. This does not establish an app bug.'
         reason+=run_note(status,case.get('preconditions'))
+        reason_code=self.reason_code(status,reason)
+        if self.verified_account:reason+=f" Verified account: {self.verified_account['role']} ({self.verified_account['username']})."
+        if status!='Passed':reason+=f' Reason code: {reason_code}.'
         device_info=self.capture_device_info()
-        result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'starting_conditions':self.redact_object(self.starting_conditions),'starting_condition_results':self.redact_object(self.starting_condition_results),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Scout iOS runner' if self.platform=='iOS' else 'Scout Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':self.platform,'device':self.config.serial,'build':device_info.get('app_version','unknown'),'device_info':device_info,'app_logs':self.capture_app_logs(),'status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False}
+        result={'suite':self.redact(str(case.get('suite','Prompt runs'))),'ticket_key':self.redact(str(case.get('ticket_key',''))),'preconditions':self.redact(str(case.get('preconditions',''))),'starting_conditions':self.redact_object(self.starting_conditions),'starting_condition_results':self.redact_object(self.starting_condition_results),'checkpoints':self.checkpoints,'checkpoint_results':list(self.checkpoint_verdicts.values()),'schema_version':1,'source':'Scout iOS runner' if self.platform=='iOS' else 'Scout Android runner','case_id':case.get('id'),'revision':case.get('revision'),'project':self.redact(str(case.get('project','General'))),'case_title':self.redact(str(case.get('title',''))),'goal':self.redact(str(case.get('goal',''))),'case_steps':self.redact(str(case.get('steps',''))),'expected_result':self.redact(str(case.get('expected',''))),'package':self.config.package,'platform':self.platform,'device':self.config.serial,'build':device_info.get('app_version','unknown'),'device_info':device_info,'app_logs':self.capture_app_logs(),'status':status,'notes':self.redact(reason),'expected_text':self.redact(self.config.expected_text),'observed_text':self.redact(screen.text) if screen else '','verification':self.redact_object(self.verification),'elapsed_ms':self.elapsed_ms(),'steps':self.history,'created':datetime.now(timezone.utc).isoformat(),'credential_values_recorded':False,'reason_code':reason_code,'verified_account':self.verified_account}
         if sandbox_report:
             result['sandbox']=sandbox_report
             result['sandbox_scenario']=self.sandbox_session.scenario
         if self.execution:
-            result['reason_code']={'Passed':'verified','Failed':'assertion_violated','Inconclusive':'evidence_incomplete','Blocked':'execution_blocked','Execution error':'runner_error'}.get(status,'unknown')
             result['execution']={'schema_version':2,'contract_fingerprint':fingerprint(self.execution),'definition':self.execution,'component':BUILD_IDENTITY,'assertions':self.protocol.results,'evidence':'execution-evidence.json','cleanup_failed':bool(self.lifecycle.failed)}
         if case.get('matrix'):
             result['matrix']=case['matrix']
@@ -361,6 +365,17 @@ class Agent:
         jev_calls=[{'step':entry['step'],**entry['jev']} for entry in self.history if 'jev' in entry]
         (self.output/'jev-output.json').write_text(json.dumps({'schema_version':1,'source':'Jev decision audit','case_id':case.get('id'),'device':self.config.serial,'calls':jev_calls},indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         return result
+
+    def reason_code(self,status:str,reason:str)->str:
+        """Why a run ended as it did, so a non-pass says what to fix instead of only that it did not pass."""
+        if status in {'Blocked','Inconclusive'} and self.stop_code:return self.stop_code
+        if status=='Inconclusive':
+            pending=[value for value in self.checkpoint_verdicts.values() if value['required'] and value['verdict']!='satisfied']
+            if any('Classifier proposed' in str(value.get('reason')) for value in pending):return 'model_unsure'
+            if any(value['verdict']=='not_reached' for value in pending):return 'path_not_reached'
+            if pending:return 'not_observable'
+            return 'evidence_incomplete'
+        return {'Passed':'verified','Failed':'assertion_violated','Blocked':'execution_blocked','Execution error':'runner_error'}.get(status,'unknown')
 
     def finalize_evidence(self, result: dict) -> dict:
         if self.lifecycle and self.lifecycle.failed:
@@ -497,8 +512,10 @@ class Agent:
         try:
             return (yield from self.pipeline.run(ctx))
         except ExecutionBlocked as exc:
+            self.stop_code=getattr(exc,'code',None)
             return self.write_result('Blocked',str(exc),ctx.screen)
         except ObservationIncomplete as exc:
+            self.stop_code=getattr(exc,'code',None)
             return self.write_result('Inconclusive',str(exc),ctx.screen)
         except (DeviceError,ModelError,OSError,ValueError) as exc:
             return self.write_result('Execution error',str(exc),ctx.screen)

@@ -14,6 +14,19 @@ VERDICTS = {
 }
 
 
+CONTROL_STATES = {'enabled', 'disabled', 'checked', 'unchecked'}
+
+
+def control_state(elements, label, state):
+    """True or False for the one control with this exact label; None when it is missing or ambiguous."""
+    found = [item for item in elements if str(item.get('label', '')).casefold() == label.casefold()]
+    if len(found) != 1:
+        return None
+    if state in {'enabled', 'disabled'}:
+        return found[0].get('enabled', True) is (state == 'enabled')
+    return None if not found[0].get('checkable') else bool(found[0].get('checked')) is (state == 'checked')
+
+
 def validate_checkpoints(value):
     if value is None:
         return []
@@ -21,15 +34,19 @@ def validate_checkpoints(value):
         raise ValueError('checkpoints must be an array of at most 12 checkpoints.')
     result, ids = [], set()
     for item in value:
-        if not isinstance(item, dict) or set(item) - {'id', 'expected', 'scope', 'required', 'method'}:
-            raise ValueError('Checkpoint fields: id, expected, scope, required, method.')
+        if isinstance(item, dict) and item.get('state', '') is None:
+            item = {key: field for key, field in item.items() if key != 'state'}
+        if not isinstance(item, dict) or set(item) - {'id', 'expected', 'scope', 'required', 'method', 'state'}:
+            raise ValueError('Checkpoint fields: id, expected, scope, required, method, state.')
         identity, expected = item.get('id'), item.get('expected')
         if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,40}', identity) or identity in ids:
             raise ValueError('Checkpoint IDs must be unique, 1–40 letters, digits, underscores or hyphens.')
         if not isinstance(expected, str) or not expected.strip() or len(expected) > 1000:
             raise ValueError('Checkpoint expected must contain 1–1000 characters.')
-        if item.get('scope') not in {'during_run', 'final'} or item.get('method') not in {'classification', 'text_present', 'text_absent'} or type(item.get('required')) is not bool:
-            raise ValueError('Set scope during_run/final, method classification/text_present/text_absent, and required boolean.')
+        if item.get('scope') not in {'during_run', 'final'} or item.get('method') not in {'classification', 'text_present', 'text_absent', 'control_state'} or type(item.get('required')) is not bool:
+            raise ValueError('Set scope during_run/final, method classification/text_present/text_absent/control_state, and required boolean.')
+        if (item['method'] == 'control_state') != ('state' in item) or ('state' in item and item['state'] not in CONTROL_STATES):
+            raise ValueError('control_state needs state enabled, disabled, checked or unchecked; other methods take no state.')
         ids.add(identity)
         result.append({**item, 'expected': expected.strip()})
     if result and not any(item['required'] for item in result):
@@ -45,6 +62,14 @@ def evaluate(checkpoints, observations, goal, final=False):
         if checkpoint['scope'] == 'final' and not final:
             continue
         pool = {str(observations[-1]['step']): observations[-1]} if checkpoint['scope'] == 'final' else evidence
+        if checkpoint['method'] == 'control_state':
+            latest = observations[-1]
+            holds = control_state(latest.get('elements', []), checkpoint['expected'], checkpoint['state'])
+            verdict = 'not_observable' if holds is None else 'satisfied' if holds else 'violated'
+            if not final and verdict != 'satisfied':
+                verdict = 'not_reached'
+            results.append({**checkpoint, 'verdict': verdict, 'confidence': 0.0 if holds is None else 1.0, 'reason': 'Exact control label not found once on the observed screen.' if holds is None else f'Exact {checkpoint["state"]} check on the observed control.', 'evidence_steps': [] if holds is None else [latest['step']], 'observed': json.dumps(latest.get('elements', []), ensure_ascii=False)[:2000]})
+            continue
         if checkpoint['method'] != 'classification':
             # Literal absence is evaluated on a nonempty observed screen, never an empty dump.
             latest = observations[-1]

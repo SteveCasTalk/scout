@@ -34,7 +34,7 @@ evidence, checkpoint verdicts, and result writing. The run itself is a
 `Pipeline` of nodes in three stages:
 
 ```
-setup     device_lease → sandbox → app_installed → lifecycle_prepare → launch_app
+setup     device_lease → account_role → sandbox → app_installed → lifecycle_prepare → launch_app
           → starting_conditions → initial_checkpoints → emulator_guard_initial
           → deterministic_execution → verification_only → compose_goal
 

@@ -2,16 +2,22 @@
 from __future__ import annotations
 from .config import getenv
 import os
+import re
 from .model import ModelError, post_json, validate_choice
 
-DEFAULT = {'account': '', 'login_state': 'any', 'app_version': '', 'required_data': []}
+DEFAULT = {'account': '', 'login_state': 'any', 'app_version': '', 'required_data': [], 'account_role': ''}
+
+
+def account_username(role):
+    """The username a role must show, from local configuration. A case names only the role."""
+    return getenv('SCOUT_ACCOUNT_'+re.sub(r'[^A-Z0-9]', '_', role.upper())+'_USERNAME', '').strip()
 
 
 def validate_starting_conditions(value):
     if value is None:
         return DEFAULT.copy()
     if not isinstance(value, dict) or set(value) - set(DEFAULT):
-        raise ValueError('Starting conditions support account, login_state, app_version, and required_data only.')
+        raise ValueError('Starting conditions support account, login_state, app_version, required_data, and account_role only.')
     result = {**DEFAULT, **value}
     if result['login_state'] not in {'any', 'signed_in', 'signed_out'}:
         raise ValueError('login_state must be any, signed_in, or signed_out.')
@@ -22,6 +28,8 @@ def validate_starting_conditions(value):
     data = result['required_data']
     if not isinstance(data, list) or len(data) > 8 or any(not isinstance(item, str) or not item.strip() or len(item) > 160 for item in data):
         raise ValueError('required_data must contain up to eight nonempty visible-text values (160 characters each).')
+    if not isinstance(result['account_role'], str) or not re.fullmatch(r'[a-z0-9_-]{0,40}', result['account_role']):
+        raise ValueError('account_role must be at most 40 lowercase letters, digits, underscores or hyphens.')
     result['account'] = result['account'].strip()
     result['app_version'] = result['app_version'].strip()
     result['required_data'] = [item.strip() for item in data]
