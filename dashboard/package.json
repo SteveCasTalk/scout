@@ -13,7 +13,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "check:case-delete": "node checks/case-delete.mjs",
     "check:run-delete": "node checks/run-delete.mjs",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node scripts/migrate-local.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

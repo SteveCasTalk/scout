@@ -12,6 +12,8 @@ Python source lives in `scout_mobile/`; launch the CLI with `scout` and MCP with
 
 ## Documentation
 
+New to Scout? Start with the [new teammate setup checklist](docs/onboarding.md).
+
 Open **Documentation** in the dashboard sidebar or visit `/docs` on its active local URL (normally [localhost:5173/docs](http://localhost:5173/docs)). The searchable product guide covers concepts, philosophy, setup, Android/iOS, MCP tools, verification, sandbox replay, scenario matrices, reviews, and troubleshooting. It contains no account data and can be read without signing in. Technical setup guides remain in `docs/` and `dashboard/README.md`.
 
 ## Current state
@@ -42,7 +44,7 @@ when explicitly choosing the previous backend.
 4. Run with an attached, authorized Android device:
 
 ```sh
-python3 -m scout_mobile --case /absolute/path/to/jev-case.json --package com.wallet.walkthedog.uat --serial DEVICE_SERIAL --adb /Users/phucnguyen/Library/Android/sdk/platform-tools/adb
+python3 -m scout_mobile --case /absolute/path/to/jev-case.json --package com.wallet.walkthedog.uat --serial DEVICE_SERIAL --adb "$ANDROID_HOME/platform-tools/adb"
 ```
 
 By default, each run temporarily disables Android autofill and credential providers, which prevents Samsung Pass and Google Password Manager save-password dialogs from blocking Jev. It also temporarily grants and silences Android 13+ notification permission so its runtime prompt does not block the test. The runner restores the device's original settings and notification permission when the run ends, including after a test failure. Use `--allow-device-prompts` to keep autofill and credential providers enabled for a CLI run; notification prompts remain suppressed. The runner still dismisses recognized prompts if one appears despite the device setting.

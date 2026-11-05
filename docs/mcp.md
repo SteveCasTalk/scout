@@ -6,12 +6,25 @@ The local MCP server exposes the Android and iOS runner to MCP clients. Jev choo
 
 Install uv and Python 3.11 or newer, then install the project dependencies once:
 
-    cd /Users/phucnguyen/Documents/ChatGPT/scout
+    cd /path/to/scout
     uv sync
 
 Install the Appium server and UiAutomator2 driver once using [Appium setup](appium-trial.md). The runner starts the installed local server on demand. Appium is the default; set `SCOUT_ANDROID_DRIVER=adb` only to explicitly choose the native ADB backend. The ADB backend supports `target_gestures` swipes but not `tap_burst` or `DRAG`, and `uiautomator dump` cannot observe continuously animating screens (Appium with `SCOUT_APPIUM_IDLE_TIMEOUT_MS=0` can).
 
 Copy .env.example to .env if needed and set TYPESAFE_API_KEY. Set SCOUT_TEST_EMAIL and SCOUT_TEST_PASSWORD locally when running authentication tests. To select a non-default ADB executable, set ADB_PATH in .env. MCP host-provided text does not require `TEXT_MODEL_API_KEY`; that key is for standalone runner use. Keep passwords and other credentials in the local credential provider, not in `enter_text`.
+
+## Claude Code
+
+The repository root contains a project-scoped `.mcp.json` that starts this server
+with `uv run scout-mcp` from the checkout. Start Claude Code anywhere inside the
+checkout and approve the `scout` server when prompted (or later with `/mcp`).
+No path editing is needed.
+
+If Claude Code cannot find `uv` (common when the desktop app is launched from the
+Dock rather than a shell), add a local-scope override with the full path from
+`which uv`; local scope takes precedence over the project file:
+
+    claude mcp add --scope local scout -- /full/path/to/uv run --directory /path/to/scout scout-mcp
 
 ## Codex MCP configuration
 
@@ -19,7 +32,7 @@ Add a local stdio server to the MCP client configuration:
 
     [mcp_servers.scout]
     command = "uv"
-    args = ["run", "--directory", "/Users/phucnguyen/Documents/ChatGPT/scout", "scout-mcp"]
+    args = ["run", "--directory", "/path/to/scout", "scout-mcp"]
 
 Restart or reload the MCP client after changing its configuration. The server loads .env from the project directory.
 
@@ -36,7 +49,7 @@ Merge this entry into any existing `mcpServers` object (do not replace other ser
           "args": [
             "run",
             "--directory",
-            "/Users/phucnguyen/Documents/ChatGPT/scout",
+            "/path/to/scout",
             "scout-mcp"
           ]
         }

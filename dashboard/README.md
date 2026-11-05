@@ -29,26 +29,11 @@ Requires Node.js >=22.13.0. From this directory:
 ```sh
 npm ci
 npm run build
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_common_cardiac.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_famous_living_lightning.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_projects_and_prompt_runs.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_project_app_ids.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_clammy_mysterio.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_brown_callisto.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_canvas_ticket_keys.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_verification_checkpoints.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_run_diagnostics_notes.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_checkpoint_reviews.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_starting_conditions.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_great_triton.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_supreme_major_mapleleaf.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_melodic_orphan.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_luxuriant_lucky_pierre.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0015_eminent_prodigy.sql
+npm run db:migrate
 npm run dev
 ```
 
-Apply each migration only once to a local database. Existing checkouts need only migrations they have not already applied. Migration `0002_projects_and_prompt_runs.sql` adds project labels and MCP-run deduplication; `0003_project_app_ids.sql` adds the Android package or iOS bundle ID per case; `0004_clammy_mysterio.sql` adds workspaces and groups existing records by project label; `0005_brown_callisto.sql` adds workspace lookup indexes; `0006_canvas_ticket_keys.sql` adds an optional Jira ticket key used by Canvas. The bundled local sign-in route creates a development identity; production identity is supplied by the hosting platform.
+`npm run db:migrate` applies every pending `drizzle/*.sql` file to the local database in order and records each one in a `_scout_migrations` table, so it is safe to rerun after every pull. `npm run db:migrate -- --status` lists applied and pending migrations. A database migrated by hand before this script existed has no record and the script refuses to touch it; mark what it already has once with `npm run db:migrate -- --baseline <last applied migration>` (for example `0015_eminent_prodigy`), then rerun. Migration `0002_projects_and_prompt_runs.sql` adds project labels and MCP-run deduplication; `0003_project_app_ids.sql` adds the Android package or iOS bundle ID per case; `0004_clammy_mysterio.sql` adds workspaces and groups existing records by project label; `0005_brown_callisto.sql` adds workspace lookup indexes; `0006_canvas_ticket_keys.sql` adds an optional Jira ticket key used by Canvas. The bundled local sign-in route creates a development identity; production identity is supplied by the hosting platform.
 
 ```sh
 npx tsc --noEmit
@@ -69,7 +54,7 @@ The API smoke check creates labeled synthetic records in the local development d
 
 For a local dashboard use `npm run dev` and open `http://localhost:5173` on the same machine as Scout. The local **Sign in with ChatGPT** route creates the bundled development identity; it does not require a real ChatGPT account. Use the same hostname consistently because `localhost` and `127.0.0.1` have separate sign-in cookies. `npm start` serves the worker build and does not install the development sign-in middleware.
 
-If the runner shows offline, start `python3 -m scout_mobile.local_server` from the repository root on that machine, then use **Test cases → Refresh**. The bridge reads that checkout's `runner-output`, not runs stored on another computer. Fresh checkouts also need the local database migrations listed above and a workspace before importing runs. Hosted dashboards cannot reach this loopback-only bridge through the local development workflow.
+If the runner shows offline, start `python3 -m scout_mobile.local_server` from the repository root on that machine, then use **Test cases → Refresh**. The bridge reads that checkout's `runner-output`, not runs stored on another computer. Fresh checkouts also need `npm run db:migrate` and a workspace before importing runs. Hosted dashboards cannot reach this loopback-only bridge through the local development workflow.
 
 Dashboard readiness uses `/api/health`, independently of sign-in. MCP starts the bridge even while the dashboard is starting, and report links preserve their run ID through sign-in.
 

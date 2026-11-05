@@ -1,0 +1,6 @@
+[mcp_servers.scout]
+command = "uv"
+args = [
+    "run",
+    "scout-mcp",
+]

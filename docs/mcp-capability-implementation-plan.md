@@ -327,7 +327,7 @@ The following are later acceptance prerequisites, not reasons to invent defaults
 
 References: [MCP contract and current workflow](mcp.md), [sandbox behavior](sandbox.md),
 [repository instructions](../AGENTS.md), and the supplied Android documents at
-`/Users/phucnguyen/Documents/custom-avatar-android/docs/testing/buddies-sprint39-test-plan.md`
+`docs/testing/buddies-sprint39-test-plan.md` in the custom-avatar-android repository
 and `scout-capability-gaps.md` in the same directory. This plan supersedes their
 original G01/G02 scope for Scout implementation; it does not rewrite product
 acceptance criteria or historical results.
