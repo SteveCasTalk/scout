@@ -218,7 +218,14 @@ class Protocol:
             fresh,_=self.observe()
             if not any('EditText' in node.get('class','') and node.get('text','')==action['text'] for node in ET.fromstring(fresh.xml).iter()):
                 raise ObservationIncomplete('The text field does not hold exactly the requested text.')
-        elif op=='CLEAR_TEXT':a.device.clear_text(element)
+        elif op=='CLEAR_TEXT':
+            record['transport']=a.device.clear_text(element)
+            # A failed clear must not read as an app result.
+            fresh,_=self.observe()
+            if element.value and any('EditText' in node.get('class','') and node.get('text','').strip()==element.value for node in ET.fromstring(fresh.xml).iter()):
+                raise ObservationIncomplete('The text field still holds its previous text after clearing.')
+        elif op=='RESTART_APP':
+            a.device.restart_app(action['package']);record['transport']='adb'
         elif op=='SUBMIT':
             # Enter only reaches a focused field, and an adapter may type without focusing it.
             if element and not element.focused:

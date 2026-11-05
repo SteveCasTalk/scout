@@ -419,9 +419,23 @@ class AndroidDevice:
                     raise DeviceError('Text entry did not settle to the requested value.')
                 time.sleep(.3)
 
-    def clear_text(self,element:Element) -> None:
+    def clear_text(self,element:Element) -> str:
+        """Empty a field with key events and return the transport used."""
         if not element.focused:self.tap(element)
         self._clear_focused_field(len(element.value)+4)
+        return 'adb'
+
+    def restart_app(self,package:str) -> None:
+        """Force-stop and reopen the app. Login and app data are kept."""
+        self.command('shell','am','force-stop',package)
+        time.sleep(.5)
+        self.launch(package)
+        # The launcher stays in front briefly, and the run's package boundary would read that as leaving the app.
+        deadline=time.monotonic()+20
+        while self.foreground()!=package:
+            if time.monotonic()>=deadline:
+                raise DeviceError('The app did not return to the foreground after restarting.')
+            time.sleep(.2)
 
     def press_enter(self) -> None:
         self.command('shell','input','keyevent','66')

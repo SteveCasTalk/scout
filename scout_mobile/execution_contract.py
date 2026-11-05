@@ -47,7 +47,7 @@ class External(Strict):
 
 class Action(Strict):
     id: str = Field(pattern=ID)
-    operation: Literal['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE','BACKGROUND','TYPE_TEXT','CLEAR_TEXT','SUBMIT','REQUIRE']
+    operation: Literal['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE','BACKGROUND','TYPE_TEXT','CLEAR_TEXT','SUBMIT','REQUIRE','RESTART_APP']
     package: str = Field(pattern=PACKAGE)
     selector: Selector | None = None
     destination: Selector | None = None
@@ -192,6 +192,7 @@ class Execution(Strict):
         if any(a.operation=='TAP_BURST' for a in self.actions):needed.add('tap_burst')
         if any(a.operation=='BACKGROUND' for a in self.actions):needed.add('app_background')
         if any(a.operation in {'TYPE_TEXT','CLEAR_TEXT','SUBMIT'} for a in self.actions):needed.add('text_entry')
+        if any(a.operation=='RESTART_APP' for a in self.actions):needed.add('app_restart')
         if self.temporal_assertions:needed.add('temporal_ui')
         if self.lifecycle.before or self.lifecycle.notification_policy!='legacy_suppress':needed.add('lifecycle')
         if self.media_assertions:needed.add('media_metadata')
@@ -203,7 +204,7 @@ class Authorizations(Strict):
     purchase_entries: list[str] = Field(default_factory=list, max_length=5)
     clear_data: bool = False
 
-FEATURES={'purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions','app_background','text_entry'}
+FEATURES={'purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions','app_background','text_entry','app_restart'}
 
 def validate_execution(value):
     return None if value is None else Execution.model_validate(value).model_dump()

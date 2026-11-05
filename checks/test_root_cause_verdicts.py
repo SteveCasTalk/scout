@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 
 from scout_mobile.agent import Agent, RunConfig
 from scout_mobile.checkpoints import control_state, evaluate, validate_checkpoints
-from scout_mobile.device import AndroidDevice
+from scout_mobile.device import AndroidDevice, DeviceError
 from scout_mobile.execution_contract import validate_execution
 from scout_mobile.execution_runtime import AccountMismatch, ExecutionBlocked, ObservationIncomplete, PathNotReached, PrerequisiteMissing, Protocol, SelectorMissing, locate
 from scout_mobile.skill_import import check_against_run, draft_path, mark_explored, setup_needed
@@ -42,6 +42,9 @@ class FakeDevice:
         self.calls.append(('type', element.value, text))
     def clear_text(self, element):
         self.calls.append(('clear', element.value))
+        return 'adb'
+    def restart_app(self, package):
+        self.calls.append(('restart', package))
     def press_enter(self):
         self.calls.append(('enter',))
     def tap(self, element, screen=None):
@@ -158,12 +161,20 @@ class TypedTextTests(unittest.TestCase):
             run_actions([action], edit_screen(), edit_screen(value='New'))
 
     def test_clear_and_submit_dispatch(self):
-        agent = run_actions([{'id': 'a', 'operation': 'CLEAR_TEXT', 'selector': self.FIELD}, {'id': 'b', 'operation': 'SUBMIT'}], edit_screen())
+        agent = run_actions([{'id': 'a', 'operation': 'CLEAR_TEXT', 'selector': self.FIELD}, {'id': 'b', 'operation': 'SUBMIT'}], edit_screen(), edit_screen(value=''))
         self.assertEqual(agent.device.calls, [('clear', 'Old caption'), ('enter',)])
 
     def test_submit_focuses_the_selected_field_first(self):
         agent = run_actions([{'id': 'a', 'operation': 'SUBMIT', 'selector': self.FIELD}], edit_screen())
         self.assertEqual([call[0] for call in agent.device.calls], ['tap', 'enter'])
+
+    def test_a_failed_clear_is_not_an_app_result(self):
+        with self.assertRaisesRegex(ObservationIncomplete, 'still holds'):
+            run_actions([{'id': 'a', 'operation': 'CLEAR_TEXT', 'selector': self.FIELD}], edit_screen())
+
+    def test_clear_records_its_transport(self):
+        agent = run_actions([{'id': 'a', 'operation': 'CLEAR_TEXT', 'selector': self.FIELD}], edit_screen(), edit_screen(value=''))
+        self.assertEqual(agent.history[-1]['transport'], 'adb')
 
     def test_credentials_are_refused(self):
         with self.assertRaisesRegex(ExecutionBlocked, 'credentials'):
@@ -292,6 +303,51 @@ class AccountGuardTests(unittest.TestCase):
     def test_configured_role_and_no_role_continue(self):
         self.assertIsNone(self.run_guard({'starting_conditions': {'account_role': 'owner'}, **self.REQUIRE}, {'SCOUT_ACCOUNT_OWNER_USERNAME': 'dog'}))
         self.assertIsNone(self.run_guard({}, {}))
+
+
+class RestartAppTests(unittest.TestCase):
+    def test_contract_declares_app_restart(self):
+        action = {'id': 'a', 'operation': 'RESTART_APP', 'package': PKG}
+        with self.assertRaisesRegex(ValueError, 'app_restart'):
+            validate_execution({'actions': [action]})
+        validate_execution({'required_capabilities': ['app_restart'], 'actions': [action]})
+
+    def test_restart_dispatches_and_is_labelled(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict('os.environ', {'SCOUT_ANDROID_DRIVER': 'adb'}):
+            case = {'execution': {'required_capabilities': ['app_restart'], 'actions': [{'id': 'a', 'operation': 'RESTART_APP', 'package': PKG}]}}
+            agent = Agent(RunConfig(PKG, 'synthetic', case, Path(folder)))
+            agent.device = FakeDevice(edit_screen())
+            agent.screenshot = lambda screen, index: None
+            agent.assess_checkpoints = lambda screen, index: None
+            agent.protocol.run()
+        self.assertEqual(agent.device.calls, [('restart', PKG)])
+        self.assertEqual(agent.history[-1]['transport'], 'adb')
+
+    def test_android_restart_force_stops_then_launches(self):
+        device = AndroidDevice('synthetic')
+        calls = []
+        device.command = lambda *args, **kwargs: calls.append(args)
+        device.launch = lambda package: calls.append(('launch', package))
+        foreground = iter(['launcher', 'launcher', PKG])
+        device.foreground = lambda: next(foreground)
+        with patch('time.sleep'):
+            device.restart_app(PKG)
+        self.assertEqual(calls, [('shell', 'am', 'force-stop', PKG), ('launch', PKG)])
+        self.assertEqual(list(foreground), [])
+
+    def test_app_that_never_returns_is_an_error(self):
+        device = AndroidDevice('synthetic')
+        device.command = lambda *args, **kwargs: None
+        device.launch = lambda package: None
+        device.foreground = lambda: 'launcher'
+        clock = iter(range(0, 1000, 30))
+        with patch('time.sleep'), patch('time.monotonic', lambda: next(clock)):
+            with self.assertRaises(DeviceError):
+                device.restart_app(PKG)
+
+    def test_cases_cannot_send_raw_commands(self):
+        with self.assertRaises(ValueError):
+            validate_execution({'actions': [{'id': 'a', 'operation': 'SHELL', 'package': PKG}]})
 
 
 class WaitForControlTests(unittest.TestCase):

@@ -175,9 +175,16 @@ class AppiumAndroidDevice(AndroidDevice):
                     raise DeviceError('Appium text entry did not settle to the requested value.')
                 time.sleep(.2)
 
-    def clear_text(self, element: Element) -> None:
+    def clear_text(self, element: Element) -> str:
+        """Compose fields can ignore a driver clear, so key events finish the job. Appium never exposes that case."""
         target = self._element(element)
         self._call(lambda _: target.clear())
+        time.sleep(.3)
+        if not any(item.role == 'textbox' and item.value == element.value for item in self.observe().elements):
+            return 'appium'
+        self.tap(element)
+        self._clear_focused_field(len(element.value) + 4)
+        return 'adb'
 
     def press_enter(self) -> None:
         self._call(lambda driver: driver.press_keycode(66))

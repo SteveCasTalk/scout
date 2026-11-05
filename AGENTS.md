@@ -132,6 +132,8 @@ mobile testing workflow for this repository.
   `docs/appium-trial.md` or `docs/ios-appium.md`; inspect available run artifacts
   in `runner-output/` before retrying. Reload the MCP server after configuration
   changes. Do not invent a Scout doctor, self-healing tool, or emulator launcher.
+- Prefer Scout's typed actions to separate ADB scripts for clearing text, backgrounding and
+  restarting the app, so results stay native Scout coverage.
 - Supplemental ADB/Appium diagnostics or verified actions may be used within the
   user's authorized scope. Label their evidence separately from native Scout
   coverage and retain the existing safeguards.

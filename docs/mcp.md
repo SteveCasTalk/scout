@@ -346,6 +346,11 @@ field must then hold exactly that text. A selector may use `text_starts_with`, o
 `require_absent` or `require_account`, plus `reason`) ends the run as Blocked, naming what is
 missing, so absent test data or the wrong account never reads as an app result.
 
+`RESTART_APP` (needs `app_restart`) force-stops and reopens the app, keeping login and data. On
+Android it and any `CLEAR_TEXT` the driver cannot finish run over the device's ADB connection;
+the trace records this as `transport`. These are fixed actions under the same guards, and cases
+cannot send arbitrary ADB commands.
+
 Starting condition `account_role` names a test account. Scout reads its username from
 `SCOUT_ACCOUNT_<ROLE>_USERNAME` in local `.env`; a missing role is Blocked before any device
 action, and the case needs a `REQUIRE` with `require_account` to verify it on screen. Roles are
