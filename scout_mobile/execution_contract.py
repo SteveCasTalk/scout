@@ -15,11 +15,13 @@ class Strict(BaseModel):
 class Selector(Strict):
     resource_id: str = Field(default='', max_length=240)
     text: str = Field(default='', max_length=240)
+    text_starts_with: str = Field(default='', max_length=240)
     class_name: str = Field(default='', max_length=240)
     @model_validator(mode='after')
     def grounded(self):
-        if not self.resource_id and not self.text:
-            raise ValueError('A selector requires an exact resource_id or text.')
+        # A text field's label is its current value, so a field may be selected by class alone; ambiguity still blocks.
+        if not self.resource_id and not self.text and not self.text_starts_with and not self.class_name.endswith('EditText'):
+            raise ValueError('A selector requires an exact resource_id or text, a text prefix, or an EditText class.')
         return self
 
 class Entry(Strict):
@@ -45,7 +47,7 @@ class External(Strict):
 
 class Action(Strict):
     id: str = Field(pattern=ID)
-    operation: Literal['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE','BACKGROUND']
+    operation: Literal['TAP','BACK','SWIPE','DRAG','TAP_BURST','PURCHASE_ENTRY','OBSERVE','BACKGROUND','TYPE_TEXT','CLEAR_TEXT','SUBMIT','REQUIRE','RESTART_APP']
     package: str = Field(pattern=PACKAGE)
     selector: Selector | None = None
     destination: Selector | None = None
@@ -61,10 +63,33 @@ class Action(Strict):
     travel: list[float] = Field(default_factory=lambda:[0.85,0.15], min_length=2, max_length=2)
     # BACKGROUND: time the app spends in the background (Home) before it is brought back.
     background_ms: int = Field(default=3000, ge=500, le=120000)
+    # TYPE_TEXT replaces the field's content with this ordinary text; credentials are refused.
+    text: str = Field(default='', max_length=200)
+    # TAP only: skip the action when the control does not appear within timeout_ms.
+    optional: bool = False
+    # Wait this long for the selected control, for example while a toast covers it.
+    appear_ms: int = Field(default=0, ge=0, le=30000)
+    # REQUIRE: end the run as Blocked unless this is visible within timeout_ms, naming what is missing.
+    require_text: str = Field(default='', max_length=240)
+    require_absent: str = Field(default='', max_length=240)
+    require_account: bool = False
+    reason: str = Field(default='', max_length=200)
     @model_validator(mode='after')
     def shape(self):
-        if self.operation in {'TAP','SWIPE','DRAG','TAP_BURST'} and self.selector is None:
+        if self.operation in {'TAP','SWIPE','DRAG','TAP_BURST','TYPE_TEXT','CLEAR_TEXT'} and self.selector is None:
             raise ValueError('This operation requires a grounded selector.')
+        if self.operation == 'TYPE_TEXT' and not self.text.strip():
+            raise ValueError('TYPE_TEXT requires text.')
+        if self.operation != 'TYPE_TEXT' and self.text:
+            raise ValueError('Only TYPE_TEXT takes text.')
+        if self.optional and self.operation != 'TAP':
+            raise ValueError('Only TAP can be optional.')
+        if self.operation == 'REQUIRE' and (sum((bool(self.require_text.strip()), bool(self.require_absent.strip()), self.require_account)) != 1 or not self.reason.strip()):
+            raise ValueError('REQUIRE needs a reason and exactly one of require_text, require_absent or require_account.')
+        if self.operation != 'REQUIRE' and (self.require_text or self.require_absent or self.require_account or self.reason):
+            raise ValueError('Only REQUIRE takes require_text, require_absent, require_account or reason.')
+        if self.appear_ms and self.selector is None:
+            raise ValueError('appear_ms needs a selector.')
         if not (0.05<=self.travel[1]<self.travel[0]<=0.95):
             raise ValueError('Swipe travel must be [start, end] with 0.05 <= end < start <= 0.95.')
         if self.operation == 'DRAG' and self.destination is None:
@@ -166,6 +191,8 @@ class Execution(Strict):
         if any(a.operation in {'SWIPE','DRAG'} for a in self.actions):needed.add('target_gestures')
         if any(a.operation=='TAP_BURST' for a in self.actions):needed.add('tap_burst')
         if any(a.operation=='BACKGROUND' for a in self.actions):needed.add('app_background')
+        if any(a.operation in {'TYPE_TEXT','CLEAR_TEXT','SUBMIT'} for a in self.actions):needed.add('text_entry')
+        if any(a.operation=='RESTART_APP' for a in self.actions):needed.add('app_restart')
         if self.temporal_assertions:needed.add('temporal_ui')
         if self.lifecycle.before or self.lifecycle.notification_policy!='legacy_suppress':needed.add('lifecycle')
         if self.media_assertions:needed.add('media_metadata')
@@ -177,7 +204,7 @@ class Authorizations(Strict):
     purchase_entries: list[str] = Field(default_factory=list, max_length=5)
     clear_data: bool = False
 
-FEATURES={'purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions','app_background'}
+FEATURES={'purchase_entry','external_packages','target_gestures','tap_burst','temporal_ui','lifecycle','media_metadata','network_contract_v2','request_assertions','app_background','text_entry','app_restart'}
 
 def validate_execution(value):
     return None if value is None else Execution.model_validate(value).model_dump()

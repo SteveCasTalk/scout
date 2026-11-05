@@ -5,12 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { checkpointResults } from './checkpoints';
 const stamp = (value: string) => new Date(value).toLocaleString();
+const REASONS: Record<string, string> = { prerequisite_missing: 'test data missing', account_not_configured: 'account role not configured', account_unverifiable: 'account role not verified by this case', account_mismatch: 'wrong account signed in', selector_missing: 'control not found', path_not_reached: 'path not reached', model_unsure: 'model unsure', not_observable: 'not observable', evidence_incomplete: 'evidence incomplete', execution_blocked: 'blocked by a guard', assertion_violated: 'check failed', runner_error: 'runner error' };
+function reasonCode(notes: string) { const code = /Reason code: ([a-z_]+)\./.exec(notes)?.[1]; return code ? ` · ${REASONS[code] || code}` : ''; }
 function download(name: string, body: string) { const url = URL.createObjectURL(new Blob([body], { type: 'text/plain' })); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 export function RunLogs({ run, files, onEvidence }: { run: Run; files: Evidence[]; onEvidence: (file: Evidence) => void }) {
     const [source, setSource] = useState<'runner' | 'app'>('runner'), [filter, setFilter] = useState('all'), [query, setQuery] = useState('');
     const checkpoints = checkpointResults(run);
     const entries = [
-        { kind: run.status === 'Execution error' ? 'error' : run.status === 'Passed' ? 'result' : 'warning', label: `Outcome: ${run.status}`, detail: run.notes, step: undefined as number | undefined, elapsed: undefined as number | undefined, screenshot: null as string | null },
+        { kind: run.status === 'Execution error' ? 'error' : run.status === 'Passed' ? 'result' : 'warning', label: `Outcome: ${run.status}${reasonCode(run.notes)}`, detail: run.notes, step: undefined as number | undefined, elapsed: undefined as number | undefined, screenshot: null as string | null },
         ...run.trace.map(item => ({ kind: item.operation === 'VERIFY_CHECKPOINTS' ? 'checkpoint' : item.operation === 'BLOCKED' || item.operation === 'EXECUTION_ERROR' ? 'error' : 'action', label: item.operation + (item.label ? ` · ${item.label}` : ''), detail: item.verification ? `${item.verification.method}: ${item.verification.status}\nExpected: ${item.verification.expected_text}\nObserved: ${item.verification.observed_text}` : item.checkpoint_results ? item.checkpoint_results.map(check => `${check.id}: ${check.verdict} — ${check.reason}`).join('\n') : '', step: item.step, elapsed: item.elapsed_ms, screenshot: item.screenshot || null }))
     ];
     const shown = entries.filter(entry => (filter === 'all' || entry.kind === filter) && `${entry.label} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()));

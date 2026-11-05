@@ -14,6 +14,7 @@ from .dashboard_client import DashboardClient, sync_run
 from . import dashboard_jobs
 from .devices import connected
 from .execution_contract import check_support, validate_authorizations
+from .starting_conditions import validate_account_username
 from .capabilities import capabilities, negotiate_case
 
 STORE = ROOT/'runner-output'/'.library-sessions'
@@ -79,6 +80,7 @@ class Sessions:
         platform=cases[0]['platform']
         if any(c['platform']!=platform or not re.fullmatch(r'[A-Za-z0-9_.]{3,240}',c['app_id']) for c in cases):
             raise ValueError('Select one platform and set an app package or bundle ID on every case.')
+        account_username=validate_account_username(packet.get('account_username') or '')
         grants=packet.get('authorizations') or {}
         if not isinstance(grants,dict):raise ValueError('Authorizations must be a per-case-ID mapping.')
         if set(grants)-{c['id'] for c in cases}:raise ValueError('Authorizations refer to an unselected case.')
@@ -112,7 +114,7 @@ class Sessions:
                                               'entry_id':c.get('matrix',{}).get('variant_id',c['id']),
                                               'variant_label':c.get('matrix',{}).get('variant_label','')} for c in cases],
                      'total_cases':len(cases),'current_case_index':0,'active_run_id':None,'outcomes':[],
-                     'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,'authorizations':grants,
+                     'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,'authorizations':grants,'account_username':account_username,
                      'continue_on_failure':packet.get('continue_on_failure',False) if matrix else False,
                      'skipped_case_ids':[],'skipped_entry_ids':[],'_stop':threading.Event(),'_client':client}
             if matrix:session.update(matrix_id=matrix_id,matrix_revision=matrix['matrix_revision'],matrix_name=matrix['matrix_name'])
@@ -140,7 +142,7 @@ class Sessions:
                         break
                     run_id=dashboard_jobs.start({'case':case,'serial':session['serial'],'start_mode':mode,
                                                 'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,
-                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium'),'authorizations':session.get('authorizations',{}).get(case['id'])},threading.Lock())
+                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium'),'authorizations':session.get('authorizations',{}).get(case['id']),'account_username':session.get('account_username','')},threading.Lock())
                     session.update(current_case_index=index,active_run_id=run_id)
                     self.persist(session)
                 self.publish_matrix(session,client)

@@ -9,8 +9,10 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import subprocess
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock, RLock
 import zipfile
 from io import BytesIO
@@ -36,7 +38,7 @@ from .execution_contract import decode_export, validate_execution
 from .capabilities import capabilities, diagnose
 
 
-from . import skill_import
+from . import project_report, skill_import
 mcp = FastMCP(PRODUCT_NAME, instructions=skill_import.INSTRUCTIONS)
 DEFAULT_PACKAGE = "com.wallet.walkthedog.uat"
 CASE_FIELDS = ("id", "revision", "goal", "steps", "expected")
@@ -212,6 +214,7 @@ def run_mobile_test(
     max_steps: int = 40,
     adb: str | None = None,
     authorizations: dict[str, Any] | None = None,
+    account_username: str = "",
 ) -> dict[str, Any]:
     """Run an exported Android or iOS test with Jev and verify expected visible text. If ordinary text is needed, call `enter_text` with the returned run_id and a user-authorized value.
 
@@ -249,6 +252,7 @@ def run_mobile_test(
             serial=device_serial,
             test_case=case,
             authorizations=authorizations,
+            account_username=account_username,
             output=output,
             adb=adb_path,
             max_steps=max_steps,
@@ -268,7 +272,8 @@ class CheckpointInput(BaseModel):
     expected: str = Field(min_length=1, max_length=1000, description='Observable expectation, or literal text for text methods.')
     scope: Literal['during_run', 'final'] = Field(description='At least once during execution, or only the final observation.')
     required: bool = Field(description='Whether this checkpoint must be satisfied for the case to pass.')
-    method: Literal['classification', 'text_present', 'text_absent']
+    method: Literal['classification', 'text_present', 'text_absent', 'control_state']
+    state: Literal['enabled', 'disabled', 'checked', 'unchecked'] | None = Field(default=None, description='control_state only: required state of the control whose exact label is in expected.')
 
 
 class StartingConditionsInput(BaseModel):
@@ -278,6 +283,8 @@ class StartingConditionsInput(BaseModel):
     login_state: Literal['any', 'signed_in', 'signed_out'] = 'any'
     app_version: str = Field(default='', max_length=120, description='Exact installed app version.')
     required_data: list[str] = Field(default_factory=list, max_length=8, description='Text values visible on the opening app screen.')
+    account_role: str = Field(default='', pattern=r'^[a-z0-9_-]{0,40}$', description='Label for the kind of account this case needs. A run without a username is Blocked, and a REQUIRE action with require_account must verify it on screen.')
+    account_username: str = Field(default='', max_length=161, description='Visible username this case needs. A username given when starting the run overrides it. Never an email or password.')
 
 
 @mcp.tool()
@@ -293,6 +300,8 @@ def get_test_case_template() -> dict[str, Any]:
             "during_run means observed at least once; final means final observation only. Neither means always true.",
             "classification uses screen text and accessibility control states, not pixels or backend access.",
             "text_present/text_absent perform case-insensitive substring checks; avoid generic words.",
+            "control_state checks one control by exact label (state enabled/disabled/checked/unchecked) without a model; prefer it over classification for on/off controls.",
+            "A REQUIRE execution action ends the run as Blocked, naming what is missing, when test data or the account_role is not established.",
             "Missing text on the wrong screen does not establish a bug. Use contextual classification when needed.",
             "Do not claim UI evidence proves backend-only or visual-pixel requirements.",
             "Include user-approved ordinary input in steps. Keep credentials in local configuration.",
@@ -715,6 +724,7 @@ def import_generated_test_cases(workspace_id: str, platform: Literal['Android','
     items, unchanged = skill_import.build_items(workspace_id, plan['ready'], existing, lambda case_id: client.library(action='case', workspace=workspace_id, case_id=case_id)['case'])
     entries = {skill_import.tc_id_of(item['case']['title']): item for item in items}
     warnings = {entry['tc_id']: entry['warnings'] for entry in plan['ready']}
+    setup_required = {entry['tc_id']: named for entry in plan['ready'] if (named := skill_import.setup_needed(entry['definition'].get('preconditions')))}
     results = []
     for batch in skill_import.batches(items):
         response = _author_cases(workspace_id, batch, dry_run)
@@ -724,12 +734,27 @@ def import_generated_test_cases(workspace_id: str, platform: Literal['Android','
     held = [{**entry, 'saved_case_id': existing[entry['tc_id']]['id']} if entry['tc_id'] in existing else entry for entry in plan['held']]
     return {'dry_run': dry_run, 'execution_started': False, 'steps_verified': False,
             'counts': {'to_save': len(results), 'unchanged': len(unchanged), 'held': len(held), 'rejected': len(plan['rejected'])},
-            'results': results, 'unchanged': unchanged, 'held': held, 'rejected': plan['rejected'],
+            'results': results, 'unchanged': unchanged, 'held': held, 'rejected': plan['rejected'], 'setup_required': setup_required,
             'note': 'Steps come from the spec. Explore the path before trusting a failure as an app bug.'}
 
 
 @mcp.tool()
-def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None, checkpoints: list[CheckpointInput] | None = None) -> dict[str, Any]:
+def draft_typed_path(exploration_run_id: str, texts: list[str] | None = None) -> dict[str, Any]:
+    """Turn a local exploration run into a typed execution to review. Pass the text typed in the run, in order, because
+    traces do not record it. Steps it cannot express are listed under unsupported, never guessed. Never executes; review
+    it, add REQUIRE steps for the case's account and test data, then save it with mark_generated_case_explored.
+    """
+    directory = _run_directory(exploration_run_id)
+    if not (directory / "result.json").is_file() or not (directory / "trace.json").is_file():
+        raise ValueError("Exploration run has no result yet.")
+    run = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+    if run.get('platform') != 'Android':
+        raise ValueError("Typed execution currently requires Android.")
+    return skill_import.draft_path(json.loads((directory / "trace.json").read_text(encoding="utf-8")), str(run.get('package')), texts)
+
+
+@mcp.tool()
+def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revision: int, exploration_run_id: str, steps: str | None = None, starting_conditions: StartingConditionsInput | None = None, execution: dict[str, Any] | None = None, checkpoints: list[CheckpointInput] | None = None) -> dict[str, Any]:
     """Record that an imported case's path was confirmed by a real exploration run, with optional corrected steps,
     starting conditions and checkpoints. Removes the review note from its later non-passing runs. Inspect the run first;
     the run must exist locally for the same app and platform. Prefer exact-text checkpoints seen in that run, because a
@@ -752,7 +777,8 @@ def mark_generated_case_explored(workspace_id: str, case_id: str, expected_revis
             raise ValueError("checkpoints must contain at least one required checkpoint.")
         trace = json.loads((directory / "trace.json").read_text(encoding="utf-8")) if (directory / "trace.json").is_file() else []
         skill_import.check_against_run(replacement, trace)
-    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions, replacement)
+    typed = None if execution is None else validate_execution(execution)
+    definition = skill_import.mark_explored(saved, exploration_run_id, steps, conditions, replacement, typed)
     request_id = str(uuid.uuid5(skill_import.NAMESPACE, f'explored|{case_id}|{expected_revision}|{exploration_run_id}'))
     return _author_cases(workspace_id, [{'request_id': request_id, 'id': case_id, 'expected_revision': expected_revision, 'case': definition}])
 
@@ -1073,13 +1099,15 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
                    conditions_confirmed: bool = False, expected_revision: int | None = None,
                    start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
                    allow_consent: bool = False, request_id: str | None = None,
-                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
+                    authorizations: dict[str, Any] | None = None, account_username: str = '') -> dict[str, Any]:
     """Start a saved case asynchronously on an explicitly selected device.
     Read its definition and prerequisites first; confirm preparation, never invent
     evidence that conditions are met. Device preflight can still return Blocked.
     expected_revision rejects concurrent edits before execution; the accepted
     revision and sandbox are pinned. Relaunch preserves login/app data. Legal or
     permission consent requires explicit human authorization; default is false.
+    account_username is the visible username to verify for this run, and overrides the
+    case's. Use the one the user gave; never pass an email or password.
     Returns session_id; poll get_run_progress, use enter_text(session_id) only
     for user-authorized ordinary input, and stop_run to stop. Results/evidence sync
     to the local dashboard; sync errors retain local files for retry.
@@ -1093,7 +1121,7 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':case['id'],'revision':case['revision']}],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username},request_id)
 
 
 @mcp.tool()
@@ -1102,7 +1130,7 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
                     conditions_confirmed: bool = False, case_ids: list[str] | None = None,
                     start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
                     allow_consent: bool = False, request_id: str | None = None,
-                    authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
+                    authorizations: dict[str, Any] | None = None, account_username: str = '') -> dict[str, Any]:
     """Start a sequential regression of up to 100 saved cases from one suite.
     Read definitions and confirm prerequisites, including that later cases can
     follow earlier ones. Optional case_ids selects a subset in that exact order;
@@ -1144,7 +1172,7 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':c['id'],'revision':c['revision']} for c in chosen],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {}},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username},request_id)
 
 
 @mcp.tool()
@@ -1430,6 +1458,57 @@ def get_run_evidence(run_id: str, filename: str) -> dict[str, Any]:
         "encoding": "base64",
         "data": base64.b64encode(data).decode("ascii"),
     }
+
+
+@mcp.tool()
+def export_project_report(workspace_id: str, project: str, ticket_key: str | None = None, suite: str | None = None,
+                          include_screenshots: bool = True, return_html: bool = False) -> dict[str, Any]:
+    """Write a standalone HTML summary of a project's latest saved runs and return its path, status counts and the
+    cases needing attention. Optional ticket_key or suite narrows it. It reports saved results as they are and never
+    runs a test or changes a verdict; assistant review notes stay labelled. With return_html the page is also returned
+    inline, without screenshots, because they make it too large for a tool reply. Report 'Failed' as a possible bug.
+    """
+    uuid.UUID(workspace_id)
+    load_local_env()
+    items: list[dict[str, Any]] = []
+    cursor = None
+    while True:
+        page = list_test_cases(workspace_id, project=project, suite=suite, ticket_key=ticket_key, limit=50, cursor=cursor)
+        items += page['items']
+        cursor = page.get('next_cursor')
+        if not cursor:
+            break
+    if not items:
+        raise ValueError('No test cases match this project and filter.')
+    def load(item: dict[str, Any]) -> dict[str, Any]:
+        entry: dict[str, Any] = {'item': item, 'case': get_test_case(workspace_id, item['id'])['case']}
+        if item.get('latest_run_id'):
+            try:
+                entry['run'] = get_saved_run(workspace_id, item['latest_run_id'])
+            except Exception:  # One unreadable run must not lose the rest of the report.
+                entry['error'] = True
+        local = ((entry.get('run') or {}).get('run') or {}).get('external_run_id')
+        if include_screenshots and local:
+            try:
+                entry['image'] = project_report.thumbnail(_run_directory(str(local)))
+            except (ValueError, OSError, subprocess.SubprocessError):
+                entry['image'] = ''
+        return entry
+    with ThreadPoolExecutor(6) as pool:
+        entries = list(pool.map(load, items))
+    secrets = [getenv('SCOUT_TEST_EMAIL', ''), getenv('SCOUT_TEST_PASSWORD', '')]
+    title = ' · '.join(part for part in (project, ticket_key, suite) if part) + ' test report'
+    name = re.sub(r'[^a-z0-9]+', '-', ' '.join(part for part in (project, ticket_key, suite) if part).lower()).strip('-') or 'project'
+    output = ROOT / 'runner-output' / 'reports' / f'{name}-report.html'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    document = project_report.render(title, entries, secrets)
+    output.write_text(document, encoding='utf-8')
+    result = {'path': str(output), 'size_bytes': output.stat().st_size, 'screenshots': sum(1 for entry in entries if entry.get('image')), **project_report.summary(entries)}
+    if include_screenshots and result['screenshots'] == 0:
+        result['screenshots_note'] = 'No screenshots were embedded. Thumbnails need saved local runs and the macOS sips tool.'
+    if return_html:
+        result['html'] = project_report.render(title, [{**entry, 'image': ''} for entry in entries], secrets)
+    return result
 
 
 @mcp.tool()

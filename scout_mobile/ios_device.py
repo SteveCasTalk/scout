@@ -257,7 +257,7 @@ class AppiumIOSDevice(AppiumAndroidDevice):
             operations = ('TYPE_TEXT',) if editable else ('SET_VALUE',) if role in {'picker', 'slider'} else ('TAP',)
             elements.append(Element(str(len(elements)+1), role, label or kind.removeprefix('XCUIElementType'), identifier, kind,
                                     value, (x, y, x+w, y+h), operations, editable, password,
-                                    node.get('focused') == 'true', value == '1' if checkable else False, checkable))
+                                    node.get('focused') == 'true', value == '1' if checkable else False, checkable, node.get('enabled', 'true') != 'false'))
             if len(elements) >= 100:break
         fingerprint = hashlib.sha256(json.dumps([texts, [(e.signature, e.value) for e in elements]], ensure_ascii=False).encode()).hexdigest()[:20]
         return Screen(raw, elements, '\n'.join(texts), fingerprint, width, height)

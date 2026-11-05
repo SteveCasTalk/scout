@@ -245,6 +245,7 @@ authentication/connectivity limitations as the existing saved-library tools.
 - record_run_verification records an independent `passed`, `failed`, or `inconclusive` judgment, explanation, and references to screenshot filenames or trace steps in `run-verification.json`. The judgment is kept separate from the runner's deterministic exact-text result.
 - list_run_evidence lists the portable evidence files for a run with filenames, media types, and sizes.
 - get_run_evidence exports one evidence file as base64, preserving its filename and media type. Decode `data` before attaching it to a PR or another provider.
+- export_project_report writes a standalone HTML summary of a project's latest saved runs to `runner-output/reports/`, optionally narrowed by `ticket_key` or `suite`, and returns its path, status counts and the cases needing attention. `return_html=true` also returns the page inline, without screenshots. It never runs a test or changes a verdict.
 - export_run_evidence_bundle returns a ZIP of the run's result, action trace, Jev audit, and screenshots as base64 for one-step sharing. Its response also lists included filenames.
 
 Runs temporarily disable Android autofill and credential providers, and suppress Android 13+ notification prompts while keeping notifications silenced for the test; the original device settings and notification permission are restored afterward. Jev stops before legal/privacy consent actions and returns an inconclusive result until the user explicitly authorizes continuing. Repeated actions that produce no observable screen change are also stopped to prevent control toggles from looping. Results remain in the local runner-output directory. Import result.json into the dashboard to save the run there; the MCP server does not bypass dashboard authentication or write to its hosted database.
@@ -336,6 +337,36 @@ disabled, hidden or out-of-viewport targets are blocked. It does not guess coord
 fallbacks. Appium supports these actions on Android; ADB declines the combined
 native gesture/burst requirements. Android execution/lifecycle additions are not
 advertised for iOS. Existing iOS and Android aliases remain available.
+
+`TYPE_TEXT`, `CLEAR_TEXT` and `SUBMIT` need `text_entry`. Give `SUBMIT` the field's selector,
+because Enter only reaches a focused field and Appium can type without focusing it. Typed text is ordinary case data:
+credential and private-code fields and locally configured credentials are refused, and the
+field must then hold exactly that text. A selector may use `text_starts_with`, or an
+`EditText` `class_name` alone. `appear_ms` waits for a control that is briefly covered, and
+`optional` skips a `TAP` whose control does not appear. `REQUIRE` (`require_text`,
+`require_absent` or `require_account`, plus `reason`) ends the run as Blocked, naming what is
+missing, so absent test data or the wrong account never reads as an app result.
+
+`RESTART_APP` (needs `app_restart`) force-stops and reopens the app, keeping login and data. On
+Android it and any `CLEAR_TEXT` the driver cannot finish run over the device's ADB connection;
+the trace records this as `transport`. These are fixed actions under the same guards, and cases
+cannot send arbitrary ADB commands.
+
+Starting condition `account_username` is the visible username a case needs. A username given
+when starting the run (`account_username` on `run_test_case`, `run_test_suite` or
+`run_mobile_test`, or the dashboard's run dialog) overrides it. `account_role` is an optional
+label for the kind of account. A case that needs an account but has no username is Blocked before
+any device action, and it needs a `REQUIRE` with `require_account` to verify the username on
+screen. Accounts are verified, not signed in, so sign the right one in on the device first. Emails
+and passwords never go in cases or run input; they stay in the local credential provider.
+
+The `control_state` checkpoint method checks one control by exact label in `expected`, with
+`state` set to `enabled`, `disabled`, `checked` or `unchecked`, without a model.
+
+Every result has a `reason_code`: `verified`, `assertion_violated`, `runner_error`,
+`execution_blocked`, `selector_missing`, `prerequisite_missing`, `account_not_configured`,
+`account_unverifiable`, `account_mismatch`, `path_not_reached`, `model_unsure`,
+`not_observable`, `evidence_incomplete` or `cleanup_failed`. Non-passing runs repeat it in `notes`.
 
 `finish="verify"` runs the typed sequence and evaluates its evidence;
 `finish="model"` resumes existing model navigation after the typed sequence.
@@ -453,12 +484,16 @@ Only LIVE rows with a settled result are saved. MOCK, STORE, BE, MANUAL, DEV, TB
 pending-contract rows return under `held` with the reason; malformed rows return
 under `rejected`. Starting conditions stay at their defaults because the app's opening screen often
 cannot prove them, such as login on a Home feed, which would falsely block the case.
-Set them with `mark_generated_case_explored` where they are observable. Steps come from the
+Rows whose preconditions name an account or test data are listed under `setup_required`,
+and `mark_generated_case_explored` refuses them until an `account_username`, `account_role`, `required_data`,
+`login_state` or `REQUIRE` step enforces that. Steps come from the
 spec, so `steps_verified` is always false. Until a case is explored, its Failed and
 Inconclusive runs carry a review note in `notes`.
 
-After a bounded exploration run, call `mark_generated_case_explored(workspace_id,
-case_id, expected_revision, exploration_run_id, steps=None, starting_conditions=None,
+After a bounded exploration run, call `draft_typed_path(exploration_run_id, texts=None)`
+to turn its path into a typed execution for review. Then call
+`mark_generated_case_explored(workspace_id, case_id, expected_revision,
+exploration_run_id, steps=None, starting_conditions=None, execution=None,
 checkpoints=None)`. It requires a local run for the same app and platform, and records
 corrected steps, the real starting conditions and replacement checkpoints. It trusts the
 caller to have inspected that run and to keep each acceptance criterion covered.

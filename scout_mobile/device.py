@@ -35,6 +35,7 @@ class Element:
     focused: bool = False
     checked: bool = False
     checkable: bool = False
+    enabled: bool = True
 
     @property
     def signature(self) -> tuple[str,str,str,tuple[int,int,int,int],bool,bool,bool]:
@@ -46,7 +47,7 @@ class Element:
         return (x1+x2)//2,(y1+y2)//2
 
     def public(self) -> dict:
-        return dict(index=self.index,role=self.role,label=self.label,resource_id=self.resource_id,value='<redacted>' if self.sensitive and self.value else self.value,operations=list(self.operations),checked=self.checked if self.checkable else None,checkable=self.checkable,focused=self.focused)
+        return dict(index=self.index,role=self.role,label=self.label,resource_id=self.resource_id,value='<redacted>' if self.sensitive and self.value else self.value,operations=list(self.operations),checked=self.checked if self.checkable else None,checkable=self.checkable,focused=self.focused,enabled=self.enabled)
 
 @dataclass
 class Screen:
@@ -350,11 +351,11 @@ class AndroidDevice:
             role='textbox' if editable else 'button' if 'Button' in cls else 'control'
             password=a.get('password')=='true'
             checkable=a.get('checkable')=='true'
-            elements.append(Element(str(len(elements)+1),role,'<credential field>' if password else label,a.get('resource-id',''),cls,value,rect,tuple(operations),sensitive,password,a.get('focused')=='true',a.get('checked')=='true',checkable))
+            elements.append(Element(str(len(elements)+1),role,'<credential field>' if password else label,a.get('resource-id',''),cls,value,rect,tuple(operations),sensitive,password,a.get('focused')=='true',a.get('checked')=='true',checkable,a.get('enabled','true')!='false'))
             if len(elements)>=100:break
         joined_text=' '.join(texts)
         # Page text is sent to the selector; sensitive EditText values are removed later by Agent._public_screen.
-        semantic=json.dumps({'text':texts,'elements':[(e.role,e.label,e.value,e.bounds,e.operations,e.checked,e.checkable,e.focused) for e in elements]},ensure_ascii=False)
+        semantic=json.dumps({'text':texts,'elements':[(e.role,e.label,e.value,e.bounds,e.operations,e.checked,e.checkable,e.focused,e.enabled) for e in elements]},ensure_ascii=False)
         digest=hashlib.sha256(semantic.encode()).hexdigest()[:16]
         return Screen(raw,elements,' · '.join(texts)[:8000],digest,width,height)
 
@@ -417,6 +418,27 @@ class AndroidDevice:
                 if time.monotonic()>=deadline:
                     raise DeviceError('Text entry did not settle to the requested value.')
                 time.sleep(.3)
+
+    def clear_text(self,element:Element) -> str:
+        """Empty a field with key events and return the transport used."""
+        if not element.focused:self.tap(element)
+        self._clear_focused_field(len(element.value)+4)
+        return 'adb'
+
+    def restart_app(self,package:str) -> None:
+        """Force-stop and reopen the app. Login and app data are kept."""
+        self.command('shell','am','force-stop',package)
+        time.sleep(.5)
+        self.launch(package)
+        # The launcher stays in front briefly, and the run's package boundary would read that as leaving the app.
+        deadline=time.monotonic()+20
+        while self.foreground()!=package:
+            if time.monotonic()>=deadline:
+                raise DeviceError('The app did not return to the foreground after restarting.')
+            time.sleep(.2)
+
+    def press_enter(self) -> None:
+        self.command('shell','input','keyevent','66')
 
     def _clear_focused_field(self,count:int) -> None:
         """Delete both ways: MOVE_END only reaches the end of the caret's line in a multi-line field."""

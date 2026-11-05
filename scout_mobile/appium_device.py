@@ -161,19 +161,51 @@ class AppiumAndroidDevice(AndroidDevice):
     def type_text(self, element: Element, value: str) -> None:
         if not value or len(value) > 200:
             raise DeviceError('Input text must be 1–200 characters.')
-        target = self._element(element)
         if element.value:
-            self._call(lambda _: target.clear())
+            self.last_text_entry = {'clear': self.clear_text(element)}
+            # Clearing can move or relabel the field, so act on what is on screen now.
+            boxes = [item for item in self.observe().elements if item.role == 'textbox']
+            element = boxes[0] if len(boxes) == 1 else element
+        else:
+            self.last_text_entry = {'clear': 'not needed'}
+        target = self._element(element)
         self._call(lambda _: target.send_keys(value))
-        if not element.password:
-            deadline = time.monotonic() + 5
+        if element.password:
+            return
+        deadline = time.monotonic() + 5
+        while True:
+            boxes = [item for item in self.observe().elements if item.role == 'textbox']
+            if any(item.value == value.strip() for item in boxes):  # Observed values are trimmed.
+                return
+            if time.monotonic() >= deadline:
+                # Lengths only: an error must not repeat what was typed.
+                raise DeviceError(f'Appium text entry did not settle to the requested {len(value.strip())} characters; the field held {[len(item.value) for item in boxes]}.')
+            time.sleep(.2)
+
+    def clear_text(self, element: Element) -> str:
+        """Compose fields can silently ignore a driver clear, so confirm it and finish with key events if needed."""
+        for _ in range(2):
+            target = self._element(element)
+            self._call(lambda _: target.clear())
+            deadline = time.monotonic() + 1.5
             while True:
-                screen = self.observe()
-                if any(e.role == 'textbox' and e.value == value.strip() for e in screen.elements):  # Observed values are trimmed.
-                    return
+                if not self._field_holds(element.value):
+                    return 'appium'
                 if time.monotonic() >= deadline:
-                    raise DeviceError('Appium text entry did not settle to the requested value.')
+                    break
                 time.sleep(.2)
+        self.tap(element)
+        self._clear_focused_field(len(element.value) + 4)
+        time.sleep(.3)
+        if self._field_holds(element.value):
+            raise DeviceError('The text field kept its previous text after clearing; nothing was typed.')
+        return 'adb'
+
+    def _field_holds(self, value: str) -> bool:
+        return any(item.role == 'textbox' and item.value == value for item in self.observe().elements)
+
+    def press_enter(self) -> None:
+        self._call(lambda driver: driver.press_keycode(66))
 
     def swipe_coordinates(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int) -> None:
         self._call(lambda driver: driver.swipe(x1, y1, x2, y2, duration_ms))

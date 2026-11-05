@@ -37,6 +37,10 @@ _FINAL_ONLY = re.compile(r"\b(no|not|never|without|absent|hidden|removed|disappe
 # A clause starting with a pronoun can't be judged without the clause before it.
 _NEEDS_PREVIOUS = re.compile(r"^(it|its|they|their|this|that|these|those)\b", re.I)
 SPEC_STEPS = 'Steps: from spec, confirm with exploration'
+# Preconditions naming an account or test data, which plain text cannot enforce.
+_NEEDS_SETUP = re.compile(r"\b(signed[ -]in|logged[ -]in|log[ -]?in|account|member|premium|owner|owns?|has an?|draft)\b", re.I)
+# A trailing count changes between runs, so a label ending in one is matched by its prefix.
+_TRAILING_COUNT = re.compile(r',?\s*\d[\d.,]*\s*[A-Za-z]*\s*$')
 _STEPS_NOTE = re.compile(re.escape(SPEC_STEPS) + r'|Steps: explored in run [A-Za-z0-9_-]+')
 UNEXPLORED_NOTE = ' Review first: this imported case\'s steps come from the spec and were not confirmed by exploration, and its setup may not have been checked, so this result does not establish an app bug.'
 _SOURCE = re.compile(re.escape(SOURCE_LABEL) + r'.*\bSource: ([0-9a-f]{16})\s*$', re.S)
@@ -67,7 +71,7 @@ STANDARD = {
     'saved_modes': ['LIVE'],
     'held_modes': HELD_MODES,
     'also_held': 'Rows marked TBD or pending contract.',
-    'after_import': 'Explore each case with a bounded prompt run, then call mark_generated_case_explored with that run ID, corrected steps, real starting_conditions and checkpoints. Prefer exact text seen in that run over clauses the classifier must judge, because a final check sees only the last screen. Non-passing runs carry a review note until then.',
+    'after_import': 'Explore each case with a bounded prompt run. Turn the confirmed path into a typed execution with draft_typed_path, adding REQUIRE steps for its account and test data, then call mark_generated_case_explored with that run ID, the execution, starting_conditions and checkpoints. Prefer control_state and exact text seen in that run over clauses the classifier must judge, because a final check sees only the last screen. Rows whose preconditions name an account or data are listed under setup_required and cannot be marked explored until something enforces them. Non-passing runs carry a review note until then.',
 }
 
 
@@ -142,6 +146,79 @@ def build_checkpoints(expected: str) -> list[dict[str, Any]]:
     if any(len(item['expected']) > 1000 for item in checkpoints):
         raise Rejected('Expected result is too long for a checkpoint (1000 characters each); split the case.')
     return checkpoints
+
+
+def setup_needed(preconditions: Any) -> str:
+    """The author's preconditions, when they name an account or data a run should enforce."""
+    text = str(preconditions or '').split(SOURCE_LABEL)[0].strip()
+    return text if _NEEDS_SETUP.search(text) else ''
+
+
+def declares_setup(starting_conditions: Any, execution: Any) -> bool:
+    conditions = starting_conditions or {}
+    return bool(conditions.get('account_role') or conditions.get('account_username') or conditions.get('required_data') or conditions.get('account') or conditions.get('login_state', 'any') != 'any'
+                or any(action.get('operation') == 'REQUIRE' for action in (execution or {}).get('actions', [])))
+
+
+def draft_path(trace: list[dict[str, Any]], package: str, texts: list[str] | None = None) -> dict[str, Any]:
+    """Turn an exploration trace into a typed path to review. It never guesses: anything it cannot express is reported."""
+    actions: list[dict[str, Any]] = []
+    review: list[str] = []
+    unsupported: list[str] = []
+    pending = list(texts or [])
+    before = ''
+    for entry in trace:
+        operation, label = entry.get('operation'), str(entry.get('label') or '')
+        screen = str((entry.get('screen') or {}).get('text') or '')
+        step = entry.get('step')
+        if entry.get('stale') or (operation in {'TAP', 'BACK'} and entry.get('page_changed') is False):
+            if operation in {'TAP', 'BACK'}:
+                review.append(f'Step {step}: left out {operation} {label!r}, which changed nothing.')
+            before = screen or before
+            continue
+        if operation == 'OBSERVE':
+            before = screen
+            continue
+        if operation in {'SWIPE_UP', 'SWIPE_DOWN', 'SET_VALUE', 'TAP_BURST', 'DRAG'}:
+            unsupported.append(f'Step {step}: {operation} has no recorded target; add it by hand from the observed screen.')
+            before = screen or before
+            continue
+        if operation not in {'TAP', 'BACK', 'TYPE_TEXT'}:
+            continue
+        action: dict[str, Any] = {'id': f'step_{step}', 'operation': operation, 'package': package}
+        resource = str(entry.get('resource_id') or '')
+        if operation == 'TAP':
+            prefix = _TRAILING_COUNT.sub('', label).strip()
+            if resource:
+                action['selector'] = {'resource_id': resource}
+            elif prefix != label and prefix:
+                action['selector'] = {'text_starts_with': prefix}
+                review.append(f'Step {step}: matches {prefix!r} by prefix, because its label ends in a count.')
+            elif label:
+                action['selector'] = {'text': label}
+            else:
+                unsupported.append(f'Step {step}: TAP has no label or resource ID.')
+                before = screen or before
+                continue
+            action['appear_ms'] = 8000
+        elif operation == 'TYPE_TEXT':
+            action['selector'] = {'resource_id': resource} if resource else {'class_name': 'android.widget.EditText'}
+            if not pending:
+                unsupported.append(f'Step {step}: the text typed here was not recorded; pass it in texts, in order.')
+                before = screen or before
+                continue
+            action['text'] = pending.pop(0)
+        known = before.split(' · ')
+        fresh = [item for item in screen.split(' · ') if len(item) >= 4 and not item.replace(',', '').replace('.', '').isdigit() and item not in known]
+        if fresh and operation != 'TYPE_TEXT':
+            action.update(wait_text=fresh[0][:240], timeout_ms=10000)
+        actions.append(action)
+        before = screen or before
+    if pending:
+        review.append(f'{len(pending)} supplied text value(s) had no TYPE_TEXT step.')
+    needed = sorted({'text_entry'} if any(item['operation'] == 'TYPE_TEXT' for item in actions) else set())
+    review.append('Add REQUIRE steps for the account and test data this case depends on, then the final checkpoints.')
+    return {'execution': {'schema_version': 2, 'required_capabilities': needed, 'actions': actions, 'finish': 'verify', 'timeout_seconds': 300}, 'review': review, 'unsupported': unsupported}
 
 
 def source_hash(row: dict[str, Any], package: str) -> str:
@@ -242,6 +319,11 @@ def check_against_run(checkpoints: list[dict[str, Any]], trace: list[dict[str, A
     for item in checkpoints:
         if item['method'] == 'classification':
             continue
+        if item['method'] == 'control_state':
+            controls = [entry['screen'].get('elements') or [] for entry in trace if entry.get('screen')]
+            if not any(str(control.get('label', '')).casefold() == item['expected'].casefold() for elements in (controls[-1:] if item['scope'] == 'final' else controls) for control in elements):
+                raise ValueError(f'{item["id"]}: control "{item["expected"]}" is not in the exploration run.')
+            continue
         text, final = item['expected'].casefold(), item['scope'] == 'final'
         pool = screens[-1:] if final else screens
         found = any(text in screen.casefold() for screen in pool)
@@ -252,7 +334,7 @@ def check_against_run(checkpoints: list[dict[str, Any]], trace: list[dict[str, A
             raise ValueError(f'{item["id"]}: "{item["expected"]}" is on {where} in the exploration run.')
 
 
-def mark_explored(saved: dict[str, Any], run_id: str, steps: str | None = None, starting_conditions: dict[str, Any] | None = None, checkpoints: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def mark_explored(saved: dict[str, Any], run_id: str, steps: str | None = None, starting_conditions: dict[str, Any] | None = None, checkpoints: list[dict[str, Any]] | None = None, execution: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return a saved imported case recorded as explored, with any corrections from that run."""
     preconditions = str(saved.get('preconditions') or '')
     if not saved_source(preconditions) or not _STEPS_NOTE.search(preconditions):
@@ -266,6 +348,11 @@ def mark_explored(saved: dict[str, Any], run_id: str, steps: str | None = None, 
         definition['steps'] = steps.strip()
     if starting_conditions is not None:
         definition['starting_conditions'] = starting_conditions
+    if execution is not None:
+        definition['execution'] = execution
+    named = setup_needed(preconditions)
+    if named and not declares_setup(definition.get('starting_conditions'), definition.get('execution')):
+        raise ValueError(f'Preconditions name an account or test data ({named[:120]!r}) that nothing enforces. Declare an account_role, required_data or login_state, or a REQUIRE step.')
     return definition
 
 
