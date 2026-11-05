@@ -2,8 +2,9 @@
 import json
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
-from scout_mobile.device import Element
+from scout_mobile.device import AndroidDevice, Element
 from scout_mobile.engine import PipelineError, build_pipeline
 from scout_mobile.engine.nodes.decide import JevDecision, LLMDecision
 from scout_mobile.model import ModelError, choose_llm, decision_options
@@ -63,6 +64,67 @@ class DecisionAgentSelectionTests(unittest.TestCase):
             self.assertIs(type(build_pipeline().get('decide')),LLMDecision)
         with patch.dict(os.environ,{'SCOUT_DECISION_AGENT':'other'}),self.assertRaises(PipelineError):
             build_pipeline()
+
+
+class FilledFieldTests(unittest.TestCase):
+    CAPTION=Element('1','textbox','<editable field>','','EditText','Blue #Twomi',(10,70,200,120),('TYPE_TEXT',),True)
+    EDIT='Goal\nSteps:\nTap "Edit caption"\nType the new caption\nExpected:\nSaved'
+
+    def offered(self,element,goal,history=()):
+        return bool(decision_options([element],'Edit caption',goal,list(history))[1]['TYPE_TEXT'])
+
+    def test_filled_field_is_offered_when_asked_to_edit(self):
+        self.assertTrue(self.offered(self.CAPTION,self.EDIT))
+
+    def test_empty_field_is_always_offered(self):
+        self.assertTrue(self.offered(NAME,'Verify this screen'))
+
+    def test_read_only_goals_do_not_offer_it(self):
+        for goal in ('Verify this screen','Steps:\nTap "Edit caption"\nExpected:\nShown','Do not type or change anything. Read the screen','Read it\nExpected:\nUser can edit text'):
+            self.assertFalse(self.offered(self.CAPTION,goal),goal)
+
+    def test_not_offered_right_after_typing(self):
+        self.assertFalse(self.offered(self.CAPTION,self.EDIT,[{'operation':'TYPE_TEXT'}]))
+        self.assertTrue(self.offered(self.CAPTION,self.EDIT,[{'operation':'TAP'}]))
+
+    def test_credentials_are_never_overwritten(self):
+        for field in (Element('1','textbox','Email','','EditText','a@b.c',(0,0,9,9),('TYPE_TEXT',),True),Element('1','textbox','Secret','','EditText','x',(0,0,9,9),('TYPE_TEXT',),True,True)):
+            self.assertFalse(self.offered(field,self.EDIT))
+
+    def test_ios_is_unchanged(self):
+        field=Element('1','textbox','Name','','XCUIElementTypeTextField','x',(0,0,9,9),('TYPE_TEXT',),False)
+        self.assertTrue(self.offered(field,'Verify this screen'))
+
+
+class ClearFieldTests(unittest.TestCase):
+    def typed(self,value,typed='new',focused=True):
+        device=AndroidDevice.__new__(AndroidDevice)
+        calls=[]
+        device.command=lambda *args,**kwargs:calls.append(args)
+        field=Element('1','textbox','Caption','','EditText',value,(0,0,9,9),('TYPE_TEXT',),True,False,focused)
+        device.observe=lambda:SimpleNamespace(elements=[SimpleNamespace(role='textbox',value=typed)])
+        with patch('scout_mobile.device.time.sleep'):
+            device.type_text(field,typed)
+        return calls
+
+    def test_empty_field_sends_no_deletes(self):
+        self.assertEqual(self.typed(''),[('shell','input','text','new')])
+
+    def test_deletes_both_ways_for_multi_line_text(self):
+        calls=self.typed('one\ntwo')
+        self.assertEqual(calls[0],('shell','input','keyevent','123'))
+        self.assertEqual(calls[1].count('67'),11)
+        self.assertEqual(calls[2].count('112'),11)
+
+    def test_long_text_is_fully_deleted_in_batches(self):
+        calls=self.typed('x'*5000)
+        self.assertEqual(sum(call.count('67') for call in calls),5004)
+        self.assertEqual(sum(call.count('112') for call in calls),5004)
+        self.assertLessEqual(max(len(call) for call in calls),103)
+
+    def test_shell_characters_are_quoted(self):
+        calls=self.typed('',typed='$(id)')
+        self.assertEqual(calls[-1],('shell','input','text',"'$(id)'"))
 
 
 if __name__=='__main__':unittest.main()

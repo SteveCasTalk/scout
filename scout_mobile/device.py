@@ -404,11 +404,9 @@ class AndroidDevice:
         if not re.fullmatch(r'[A-Za-z0-9@._+!#$&*()=:/?\- ]+',value):
             raise DeviceError('ADB text input cannot safely type this value. Use a test account with supported ASCII characters.')
         if not element.focused:self.tap(element)
-        if element.value:
-            self.command('shell','input','keyevent','123') # MOVE_END
-            for _ in range(min(len(element.value)+4,204)):
-                self.command('shell','input','keyevent','67') # DEL
-        self.command('shell','input','text',value.replace(' ','%s'))
+        if element.value:self._clear_focused_field(len(element.value)+4)
+        # adb shell re-parses its arguments, and the allowed characters include $, & and parentheses.
+        self.command('shell','input','text',shlex.quote(value.replace(' ','%s')))
         # Samsung's IME can finish committing characters after `input text` exits.
         time.sleep(1.2)
         if not element.password:
@@ -419,6 +417,13 @@ class AndroidDevice:
                 if time.monotonic()>=deadline:
                     raise DeviceError('Text entry did not settle to the requested value.')
                 time.sleep(.3)
+
+    def _clear_focused_field(self,count:int) -> None:
+        """Delete both ways: MOVE_END only reaches the end of the caret's line in a multi-line field."""
+        self.command('shell','input','keyevent','123') # MOVE_END
+        for keycode in ('67','112'): # DEL, FORWARD_DEL
+            for start in range(0,count,100):
+                self.command('shell','input','keyevent',*[keycode]*min(100,count-start))
 
     def swipe(self,direction:str,width:int,height:int) -> None:
         x=width//2
