@@ -117,6 +117,34 @@ class AppiumAdapterTests(unittest.TestCase):
         self.assertLess(actions[0]['y'], 2214)
         self.assertEqual([action['type'] for action in actions], ['pointerMove', 'pointerDown', 'pause', 'pointerUp'])
 
+    # Large-screen emulators show a taskbar: its window (what getSystemBars reports) is far taller than the
+    # navigation-bar inset it actually occupies, and once blocked the consent screen's "Agree & continue".
+    TASKBAR_DUMPSYS = (Path(__file__).parent / 'fixtures' / 'dumpsys_window_taskbar.txt').read_text()
+
+    def test_system_bars_come_from_visible_window_insets(self):
+        device, driver = self.device()
+        driver.execute_script.return_value = {'navigationBar': {'visible': True, 'x': 0, 'y': 2221, 'width': 1600, 'height': 339}}
+        with patch.object(device, 'command', return_value=Mock(returncode=0, stdout=self.TASKBAR_DUMPSYS.encode())):
+            self.assertEqual(device.system_bars(), [(0, 0, 1600, 48), (0, 2496, 1600, 2560)])
+        driver.execute_script.assert_not_called()
+
+    def test_consent_button_above_a_taskbar_is_tapped(self):
+        device, driver = self.device()
+        driver.execute_script.return_value = {'navigationBar': {'visible': True, 'x': 0, 'y': 2221, 'width': 1600, 'height': 339}}
+        tick = self._element('I have read and agree', (48, 2204, 1552, 2304))
+        agree = self._element('Agree & continue', (48, 2336, 1552, 2448))
+        target = Mock(); target.rect = {'x': 48, 'y': 2336, 'width': 1504, 'height': 112}
+        driver.find_elements.return_value = [target]
+        with patch.object(device, 'command', return_value=Mock(returncode=0, stdout=self.TASKBAR_DUMPSYS.encode())):
+            device.tap(agree, Screen('', [tick, agree], 'consent', 'consent', 1600, 2560))
+        target.click.assert_called_once()
+
+    def test_system_bars_fall_back_to_appium_when_dumpsys_is_unavailable(self):
+        device, driver = self.device()
+        driver.execute_script.return_value = {'navigationBar': {'visible': True, 'x': 0, 'y': 2214, 'width': 1080, 'height': 126}}
+        with patch.object(device, 'command', side_effect=DeviceError('adb missing')):
+            self.assertEqual(device.system_bars(), [(0, 2214, 1080, 2340)])
+
     def test_appium_still_clicks_an_uncovered_element(self):
         device, driver = self.device()
         driver.execute_script.return_value = {}

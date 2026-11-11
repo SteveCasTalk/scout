@@ -9,6 +9,8 @@ from .config import getenv
 
 import time
 import os
+import re
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
@@ -136,8 +138,17 @@ class AppiumAndroidDevice(AndroidDevice):
         return matches[0]
 
     def system_bars(self) -> list[tuple[int, int, int, int]]:
-        """Visible status/navigation bar rectangles; edge-to-edge apps draw content underneath them."""
+        """Visible status/navigation bar rectangles; edge-to-edge apps draw content underneath them.
+
+        Taken from the window manager's visible insets (what the bars really occupy). Appium's getSystemBars
+        reports the bar *windows*, and on large screens the taskbar window is far taller than its inset
+        (e.g. 339 px for a 64 px navigation bar), which would mark controls above it as covered.
+        """
         if self._system_bars is None:
+            insets = self._inset_bars()
+            if insets:
+                self._system_bars = insets
+                return self._system_bars
             try:
                 bars = self._call(lambda driver: driver.execute_script('mobile: getSystemBars')) or {}
                 self._system_bars = [(int(bar['x']), int(bar['y']), int(bar['x']) + int(bar['width']), int(bar['y']) + int(bar['height']))
@@ -146,6 +157,24 @@ class AppiumAndroidDevice(AndroidDevice):
             except (DeviceError, KeyError, TypeError, ValueError):
                 self._system_bars = []
         return self._system_bars
+
+    _INSET = re.compile(r'InsetsSource id=\S+ type=(statusBars|navigationBars) frame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\] visible=true')
+
+    def _inset_bars(self) -> list[tuple[int, int, int, int]]:
+        """Visible status/navigation bar insets from `dumpsys window`; [] when unavailable."""
+        try:
+            result = self.command('shell', 'dumpsys', 'window', timeout=10, check=False)
+        except (DeviceError, OSError, subprocess.SubprocessError):
+            return []
+        if getattr(result, 'returncode', 1):
+            return []
+        text = result.stdout.decode(errors='replace') if isinstance(result.stdout, bytes) else str(result.stdout or '')
+        bars: list[tuple[int, int, int, int]] = []
+        for match in self._INSET.finditer(text):
+            rect = tuple(int(value) for value in match.groups()[1:])
+            if rect[2] > rect[0] and rect[3] > rect[1] and rect not in bars:
+                bars.append(rect)
+        return bars
 
     def tap(self, element: Element, screen: Screen | None = None) -> None:
         point = tap_point(element, screen, self.system_bars()) if screen is not None else element.center

@@ -1,0 +1,11 @@
+      Window #5: WindowStateAnimator{38ae57b StatusBar}
+    mStatusBar=Window{f027ced u0 StatusBar}
+    mNavigationBar=Window{3253415 u0 Taskbar}
+    mNavigationBarCanMove=false
+    mHasBottomNavigationBar=true
+        InsetsSource id=28eb0000 type=statusBars frame=[0,0][1600,48] visible=true flags= sideHint=TOP boundingRects=null
+        InsetsSource id=35690001 type=navigationBars frame=[0,2496][1600,2560] visible=true flags=SUPPRESS_SCRIM|ANIMATE_RESIZING sideHint=BOTTOM boundingRects=null
+        InsetsSourceControl: {35690001 mType=navigationBars initiallyVisible mSurfacePosition=Point(0, 2221) mInsetsHint=Insets{left=0, top=0, right=0, bottom=64}}
+        mSource=InsetsSource id=35690001 type=navigationBars frame=[0,2496][1600,2560] visible=true flags=SUPPRESS_SCRIM|ANIMATE_RESIZING sideHint=BOTTOM boundingRects=null
+        InsetsSource id=0001 type=ime frame=[0,1400][1600,2560] visible=false flags= sideHint=BOTTOM boundingRects=null
+        InsetsSource id=0002 type=navigationBars frame=[0,2400][1600,2560] visible=false flags= sideHint=BOTTOM boundingRects=null
