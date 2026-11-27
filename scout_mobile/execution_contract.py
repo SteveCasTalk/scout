@@ -20,8 +20,8 @@ class Selector(Strict):
     @model_validator(mode='after')
     def grounded(self):
         # A text field's label is its current value, so a field may be selected by class alone; ambiguity still blocks.
-        if not self.resource_id and not self.text and not self.text_starts_with and not self.class_name.endswith('EditText'):
-            raise ValueError('A selector requires an exact resource_id or text, a text prefix, or an EditText class.')
+        if not self.resource_id and not self.text and not self.text_starts_with and not self.class_name.endswith(('EditText', 'AutoCompleteTextView')):
+            raise ValueError('A selector requires an exact resource_id or text, a text prefix, or a text-field class (EditText, AutoCompleteTextView).')
         return self
 
 class Entry(Strict):

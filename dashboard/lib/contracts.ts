@@ -18,7 +18,7 @@ export const jevAudit = z.object({
     latency_ms: z.number().int().nonnegative(),
 });
 export const deviceInfoInput = z.object({ automation_backend: z.enum(['adb','appium']).optional(), session_start_ms: z.string().max(20).optional(), manufacturer: z.string().max(120).optional(), model: z.string().max(120).optional(), ios_version: z.string().max(80).optional(), android_version: z.string().max(80).optional(), api_level: z.string().max(20).optional(), screen_size: z.string().max(80).optional(), package: z.string().max(240).optional(), app_version: z.string().max(120).optional() }).strict();
-export const runInput = z.object({ caseId: z.string().uuid(), revision: z.number().int().positive(), externalRunId: z.string().max(80).optional(), status: z.enum(statuses), build: z.string().trim().min(1).max(120), device: z.string().trim().min(1).max(160), device_info: deviceInfoInput.default({}), app_logs: z.string().max(20000).default(''), notes: z.string().trim().min(1).max(8000), source: z.enum(['Manual','Scout import','Jev import','Prompt run']).default('Manual'), trace: z.array(z.object({step:z.number().int().nonnegative(),starting_condition_results:z.array(startingConditionResult).max(11).optional(),checkpoint_results:z.array(checkpointResult).max(12).optional(),operation:z.string().max(40),label:z.string().max(200).nullable().optional(),elapsed_ms:z.number().int().nonnegative().optional(),screenshot:z.string().max(100).nullable().optional(),verification:z.object({status:z.enum(['passed','failed','inconclusive','not_run']),method:z.string().max(80),expected_text:z.string().max(8000),observed_text:z.string().max(8000)}).optional(),jev:jevAudit.optional()})).max(204).default([]) });
+export const runInput = z.object({ caseId: z.string().uuid(), revision: z.number().int().positive(), externalRunId: z.string().max(80).optional(), status: z.enum(statuses), build: z.string().trim().min(1).max(120), device: z.string().trim().min(1).max(160), device_info: deviceInfoInput.default({}), app_logs: z.string().max(20000).default(''), notes: z.string().trim().min(1).max(8000), source: z.enum(['Manual','Scout import','Jev import','Prompt run','Driver session']).default('Manual'), trace: z.array(z.object({step:z.number().int().nonnegative(),starting_condition_results:z.array(startingConditionResult).max(11).optional(),checkpoint_results:z.array(checkpointResult).max(12).optional(),operation:z.string().max(40),label:z.string().max(200).nullable().optional(),elapsed_ms:z.number().int().nonnegative().optional(),screenshot:z.string().max(100).nullable().optional(),verification:z.object({status:z.enum(['passed','failed','inconclusive','not_run']),method:z.string().max(80),expected_text:z.string().max(8000),observed_text:z.string().max(8000)}).optional(),jev:jevAudit.optional()})).max(204).default([]) });
 export type TestCase = z.infer<typeof caseInput> & {
     id: string;
     revision: number;
@@ -36,7 +36,7 @@ export type Run = {
     app_logs: string;
     notes: string;
     created: string;
-    source: 'Manual' | 'Scout import' | 'Jev import' | 'Prompt run';
+    source: 'Manual' | 'Scout import' | 'Jev import' | 'Prompt run' | 'Driver session';
     external_run_id?: string | null;
     trace: {step:number;starting_condition_results?:StartingConditionResult[];checkpoint_results?:CheckpointResult[];operation:string;label?:string|null;elapsed_ms?:number;screenshot?:string|null;verification?:{status:'passed'|'failed'|'inconclusive'|'not_run';method:string;expected_text:string;observed_text:string};jev?:z.infer<typeof jevAudit>}[];
 };

@@ -129,7 +129,7 @@ class AppiumAndroidDevice(AndroidDevice):
         left, top, right, bottom = element.bounds
         bounds = f'[{left},{top}][{right},{bottom}]'
         predicates = [f'@class={literal(element.class_name)}', f'@bounds={literal(bounds)}']
-        predicates.append("(@clickable='true' or @checkable='true' or @editable='true' or contains(@class,'EditText'))")
+        predicates.append("(@clickable='true' or @checkable='true' or @editable='true' or contains(@class,'EditText') or contains(@class,'AutoCompleteTextView'))")
         if element.resource_id:predicates.append(f'@resource-id={literal(element.resource_id)}')
         # One snapshot lookup avoids stale candidates during multiple rect calls.
         matches = self._call(lambda driver: driver.find_elements('xpath', '//*[' + ' and '.join(predicates) + ']'))
@@ -190,7 +190,10 @@ class AppiumAndroidDevice(AndroidDevice):
     def type_text(self, element: Element, value: str) -> None:
         if not value or len(value) > 200:
             raise DeviceError('Input text must be 1–200 characters.')
-        if element.value:
+        if element.value and self._shows_hint(element):
+            # The observed value is the field's placeholder: the field is empty and clearing could never remove it.
+            self.last_text_entry = {'clear': 'hint only'}
+        elif element.value:
             self.last_text_entry = {'clear': self.clear_text(element)}
             # Clearing can move or relabel the field, so act on what is on screen now.
             boxes = [item for item in self.observe().elements if item.role == 'textbox']
@@ -211,8 +214,19 @@ class AppiumAndroidDevice(AndroidDevice):
                 raise DeviceError(f'Appium text entry did not settle to the requested {len(value.strip())} characters; the field held {[len(item.value) for item in boxes]}.')
             time.sleep(.2)
 
+    def _shows_hint(self, element: Element) -> bool:
+        """True when the field's reported text is only its hint. Page source has no hint, so ask the element."""
+        try:
+            target = self._element(element)
+            hint = self._call(lambda _: target.get_attribute('hint'))
+            return bool(hint) and hint == self._call(lambda _: target.get_attribute('text'))
+        except Exception:
+            return False  # Best effort: an unreadable hint means the observed value is treated as real text.
+
     def clear_text(self, element: Element) -> str:
         """Compose fields can silently ignore a driver clear, so confirm it and finish with key events if needed."""
+        if element.value and self._shows_hint(element):
+            return 'hint only'
         for _ in range(2):
             target = self._element(element)
             self._call(lambda _: target.clear())

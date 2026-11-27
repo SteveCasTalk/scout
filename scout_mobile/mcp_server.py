@@ -30,7 +30,7 @@ from .config import ROOT, load_local_env, getenv
 from .dashboard_runtime import ensure_dashboard
 from .device import AndroidDevice
 from .devices import connected
-from .validation import validate_prompt_steps
+from .validation import validate_prompt_account, validate_prompt_steps
 from .checkpoints import validate_checkpoints
 from .starting_conditions import validate_starting_conditions
 from .branding import PRODUCT_NAME
@@ -215,12 +215,17 @@ def run_mobile_test(
     adb: str | None = None,
     authorizations: dict[str, Any] | None = None,
     account_username: str = "",
+    test_email: str = "",
+    test_password: str = "",
 ) -> dict[str, Any]:
     """Run an exported Android or iOS test with Jev and verify expected visible text. If ordinary text is needed, call `enter_text` with the returned run_id and a user-authorized value.
 
-    Credentials and model API keys are read from the local .env file. Do not pass credentials as tool arguments.
+    Credentials come from the local .env file unless the user gives an account in the prompt: then pass it as
+    test_email and test_password. It is used only for this run, typed only by the local runner, kept out of model
+    requests and redacted from saved output. Tool arguments stay visible to the MCP host, so .env is more private.
     """
     load_local_env()
+    test_email, test_password = validate_prompt_account(test_email, test_password)
     if not 1 <= max_steps <= 100:
         raise ValueError("max_steps must be between 1 and 100.")
     path = Path(case_file).expanduser().resolve()
@@ -258,6 +263,8 @@ def run_mobile_test(
             max_steps=max_steps,
             timeout_seconds=180,
             expected_text=assertion,
+            test_email=test_email,
+            test_password=test_password,
             mcp_host_text=True,
         )
     )
@@ -793,6 +800,12 @@ def _library_dashboard():
         return _LIBRARY_CLIENTS[url]
 
 
+def _prompt_account(email: str, password: str) -> dict:
+    """The bridge removes this before it fingerprints or saves the start request."""
+    email, password = validate_prompt_account(email, password)
+    return {'test_account': {'email': email, 'password': password}} if email else {}
+
+
 def _start_library_session(packet: dict, request_id: str | None):
     request_id=str(uuid.UUID(request_id)) if request_id else str(uuid.uuid4())
     packet['request_id']=request_id
@@ -1099,7 +1112,8 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
                    conditions_confirmed: bool = False, expected_revision: int | None = None,
                    start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
                    allow_consent: bool = False, request_id: str | None = None,
-                    authorizations: dict[str, Any] | None = None, account_username: str = '') -> dict[str, Any]:
+                    authorizations: dict[str, Any] | None = None, account_username: str = '',
+                    test_email: str = '', test_password: str = '') -> dict[str, Any]:
     """Start a saved case asynchronously on an explicitly selected device.
     Read its definition and prerequisites first; confirm preparation, never invent
     evidence that conditions are met. Device preflight can still return Blocked.
@@ -1107,7 +1121,10 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
     revision and sandbox are pinned. Relaunch preserves login/app data. Legal or
     permission consent requires explicit human authorization; default is false.
     account_username is the visible username to verify for this run, and overrides the
-    case's. Use the one the user gave; never pass an email or password.
+    case's. Use the one the user gave; never put an email or password in it.
+    test_email/test_password: an account the user gave in the prompt for this run. It
+    replaces the local .env account, stays in runner memory only (never in the case,
+    session file, dashboard or evidence) and is typed only by the local runner.
     Returns session_id; poll get_run_progress, use enter_text(session_id) only
     for user-authorized ordinary input, and stop_run to stop. Results/evidence sync
     to the local dashboard; sync errors retain local files for retry.
@@ -1121,7 +1138,8 @@ def run_test_case(workspace_id: str, case_id: str, serial: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':case['id'],'revision':case['revision']}],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username,
+                                               **_prompt_account(test_email,test_password)},request_id)
 
 
 @mcp.tool()
@@ -1130,7 +1148,8 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
                     conditions_confirmed: bool = False, case_ids: list[str] | None = None,
                     start_mode: Literal['current','relaunch'] = 'current', max_steps: int = 40,
                     allow_consent: bool = False, request_id: str | None = None,
-                    authorizations: dict[str, Any] | None = None, account_username: str = '') -> dict[str, Any]:
+                    authorizations: dict[str, Any] | None = None, account_username: str = '',
+                    test_email: str = '', test_password: str = '') -> dict[str, Any]:
     """Start a sequential regression of up to 100 saved cases from one suite.
     Read definitions and confirm prerequisites, including that later cases can
     follow earlier ones. Optional case_ids selects a subset in that exact order;
@@ -1141,7 +1160,8 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
     Poll get_run_progress(session_id). Consent defaults false and needs explicit
     human authorization. Recording must be stopped before sandbox case execution.
     Optional UUID request_id deduplicates identical start retries; a fresh UUID
-    is required for an intentional new regression.
+    is required for an intentional new regression. test_email/test_password work as
+    in run_test_case: one account from the prompt for every case in this run.
     """
     client=_library_dashboard()
     if case_ids is not None and (not 1<=len(case_ids)<=100 or len(set(case_ids))!=len(case_ids)):
@@ -1172,7 +1192,8 @@ def run_test_suite(workspace_id: str, project: str, suite: str,
     return _start_library_session({'workspace_id':workspace_id,'dashboard_url':client.url,
                                                'cases':[{'id':c['id'],'revision':c['revision']} for c in chosen],
                                                'serial':serial,'conditions_confirmed':conditions_confirmed,
-                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username},request_id)
+                                               'start_mode':start_mode,'max_steps':max_steps,'allow_consent':allow_consent,'authorizations':authorizations or {},'account_username':account_username,
+                                               **_prompt_account(test_email,test_password)},request_id)
 
 
 @mcp.tool()
@@ -1566,6 +1587,126 @@ def list_ios_devices() -> dict[str, Any]:
 def run_android_test(case_file: str, package: str | None = None, serial: str | None = None, max_steps: int = 40, adb: str | None = None, authorizations: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compatibility entry point. Prefer run_mobile_test for platform-aware exported cases."""
     return run_mobile_test(case_file, package, serial, max_steps, adb, authorizations=authorizations)
+
+# ----- Driver mode: the host agent drives the device one action at a time; Scout runs no model. -----
+
+@mcp.tool()
+def mobile_session_start(package: str, platform: Literal['Android', 'iOS'] = 'Android', serial: str | None = None,
+                         title: str = '', launch: bool = True, allow_consent: bool = False, allowed_packages: list[str] | None = None,
+                         project: str = 'General', ticket_key: str = '', account: str = '', test_email: str = '', test_password: str = '',
+                         adb: str | None = None) -> dict[str, Any]:
+    """Start a driver-mode session: you choose every action, Scout runs no model. Holds the device lease until
+    mobile_session_end (or 15 idle minutes), so no other Scout run can use the device meanwhile.
+
+    Loop: read the snapshot, act on one of its refs (mobile_tap / mobile_type / mobile_swipe ...), read the snapshot
+    each action returns. Refs look like `@s1a2b3c4d5:e3` and belong to one snapshot; they fail closed with STALE_REF
+    or AMBIGUOUS_TARGET instead of guessing, so take a fresh snapshot then. Every reply is one envelope:
+    `ok`, then `data` or `error` with `code`, `suggestion` and `disposition.retry` (retry only when it is `safe`).
+    Purchase, consent, credential and app-boundary guards apply to every action. allow_consent=true only when the user
+    explicitly authorizes accepting the app's terms or permission prompts. Actions run only while the target app is
+    in front (mobile_back is also allowed outside it); allowed_packages declares up to 5 other apps the user approved
+    acting in, such as a helper package the app opens (never a store or credential manager).
+    Evidence goes to runner-output/<run_id>; `project` and `ticket_key` file it in the dashboard, where the
+    dashboard's sync imports it as a "Driver session" run. `account` picks a named test account from the local
+    provider (SCOUT_ACCOUNT_<NAME>_EMAIL / _PASSWORD in .env) for mobile_type credential=email|password; omit it for
+    SCOUT_TEST_EMAIL / SCOUT_TEST_PASSWORD. When the user gives an account in the prompt, pass it as test_email and
+    test_password instead: it lives only in this session's memory, is redacted from evidence, and is typed only through
+    mobile_type credential=email|password. Never pass credentials as mobile_type text.
+    """
+    load_local_env()
+    adb_path = adb or getenv("ADB_PATH") or "adb"
+    try:
+        device_serial = _select_device(adb_path, serial, platform)
+    except ValueError as exc:
+        return {'version': 1, 'ok': False, 'command': 'session_start', 'error': {'code': 'DEVICE_NOT_FOUND', 'message': str(exc), 'suggestion': 'List devices and pass serial explicitly.', 'disposition': {'delivery': 'not_delivered', 'retry': 'never'}}}
+    from . import driver
+    return driver.start(platform, (package or '').strip(), device_serial, adb_path, title, allow_consent, launch, allowed_packages, project, ticket_key, account,
+                        test_email, test_password)
+
+
+@mcp.tool()
+def mobile_snapshot(session_id: str, include_bounds: bool = False) -> dict[str, Any]:
+    """Observe the current screen: interactive controls with refs, page text and the foreground app."""
+    from . import driver
+    return driver.call(session_id, 'snapshot', 'snapshot', include_bounds)
+
+
+@mcp.tool()
+def mobile_find(session_id: str, query: str) -> dict[str, Any]:
+    """Take a snapshot and return the controls whose label or resource ID contains `query` (case-insensitive)."""
+    from . import driver
+    return driver.call(session_id, 'find', 'find', query)
+
+
+@mcp.tool()
+def mobile_tap(session_id: str, ref: str) -> dict[str, Any]:
+    """Tap the control `ref` names. Returns the settled screen as a new snapshot."""
+    from . import driver
+    return driver.call(session_id, 'tap', 'tap', ref)
+
+
+@mcp.tool()
+def mobile_type(session_id: str, ref: str, text: str | None = None, credential: Literal['email', 'password'] | None = None) -> dict[str, Any]:
+    """Replace a text field's content. Pass ordinary `text` the user asked for, or `credential` to type the local
+    SCOUT_TEST_EMAIL / SCOUT_TEST_PASSWORD from .env (never pass credential values as text)."""
+    from . import driver
+    return driver.call(session_id, 'type', 'type', ref, text, credential)
+
+
+@mcp.tool()
+def mobile_clear(session_id: str, ref: str) -> dict[str, Any]:
+    """Empty a text field."""
+    from . import driver
+    return driver.call(session_id, 'clear', 'clear', ref)
+
+
+@mcp.tool()
+def mobile_swipe(session_id: str, direction: Literal['up', 'down', 'left', 'right'], ref: str | None = None) -> dict[str, Any]:
+    """Swipe across the screen, or inside the control `ref` names (a pager or carousel). `up` scrolls content up."""
+    from . import driver
+    return driver.call(session_id, 'swipe', 'swipe', direction, ref)
+
+
+@mcp.tool()
+def mobile_back(session_id: str) -> dict[str, Any]:
+    """Android: system Back. iOS: taps the screen's single Back button, or refuses."""
+    from . import driver
+    return driver.call(session_id, 'back', 'back')
+
+
+@mcp.tool()
+def mobile_wait(session_id: str, text: str | None = None, absent_text: str | None = None, timeout_ms: int = 5000, poll_ms: int = 250) -> dict[str, Any]:
+    """Poll until `text` is visible or `absent_text` is gone (case-insensitive), up to timeout_ms. Use this instead of
+    sleeping. A TIMEOUT error carries the last snapshot."""
+    from . import driver
+    return driver.call(session_id, 'wait', 'wait', text, absent_text, timeout_ms, poll_ms)
+
+
+@mcp.tool()
+def mobile_screenshot(session_id: str) -> Image:
+    """Capture the current screen as evidence and return it. Screens with credential fields or values are withheld."""
+    from . import driver
+    try:
+        _, data = driver.screenshot(session_id)
+    except driver.DriverError as exc:
+        raise ValueError(f'{exc.code}: {exc.message}') from None
+    return Image(data=data, format='png')
+
+
+@mcp.tool()
+def mobile_session_end(session_id: str) -> dict[str, Any]:
+    """End the session: write result.json and trace.json, release the device and lease, and return a typed-path draft
+    (Android) built from the actions. Review the draft, then save it with mark_generated_case_explored or a case."""
+    from . import driver
+    return driver.end(session_id)
+
+
+@mcp.tool()
+def mobile_list_sessions() -> dict[str, Any]:
+    """List active driver-mode sessions in this MCP server."""
+    from . import driver
+    return {'sessions': driver.sessions()}
+
 
 run_android_test_from_prompt = run_mobile_test_from_prompt
 mcp.add_tool(run_mobile_test_from_prompt, name="run_android_test_from_prompt", description="Compatibility name for run_mobile_test_from_prompt; defaults to Android.")

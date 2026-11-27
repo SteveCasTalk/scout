@@ -206,6 +206,8 @@ class Agent:
         label=f'{element.label} {element.resource_id} {element.class_name}'
         if PASSWORD_FIELD.search(label):return self.test_password,'password'
         if EMAIL_FIELD.search(label):return self.test_email,'email'
+        # A field that already holds an email (e.g. prefilled after logout) is labeled by its value, not its purpose.
+        if element.role=='textbox' and EMAIL_VALUE.fullmatch(element.value.strip()):return self.test_email,'email'
         if element.role=='textbox' and 'Enter your email address' in screen.text and not any(e.password for e in screen.elements):
             return self.test_email,'email'
         return None

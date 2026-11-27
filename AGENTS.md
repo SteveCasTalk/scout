@@ -53,6 +53,12 @@ mobile testing workflow for this repository.
 
 ## Scout execution and verification workflow
 
+- For step-by-step exploration that you drive yourself, use driver mode
+  (`mobile_session_start`, then `mobile_snapshot` / `mobile_tap` / `mobile_type` /
+  `mobile_wait`, then `mobile_session_end`). Act only on refs from the latest
+  snapshot, take a new snapshot after `STALE_REF` or `AMBIGUOUS_TARGET`, retry
+  only when `disposition.retry` is `safe`, and always end the session so the
+  device lease is released. Its evidence is exploration-only, never a verdict.
 - For exploration, use `run_mobile_test_from_prompt` with the selected
   `platform`, `package`, `serial`, a concise goal, and a bounded `max_steps`.
   Ground navigation steps in observed controls. Inspect `get_run_result` and
@@ -68,6 +74,12 @@ mobile testing workflow for this repository.
   `require_account` step, and `REQUIRE` steps for data, so missing setup ends as Blocked with a
   `reason_code`. Report that as a setup blocker. Keep emails and passwords in the local provider,
   and never type credentials through `TYPE_TEXT`.
+- When the user gives an account in the prompt, pass it as `test_email` and `test_password` to
+  `run_test_case`, `run_test_suite`, `run_mobile_test`, `run_mobile_test_from_prompt` or
+  `mobile_session_start`. It is used for that run only, never saved to the case, dashboard or
+  evidence, and typed only by the local runner (driver mode: `mobile_type` `credential=email|password`).
+  Never write it into case definitions, `account_username`, text fields or reports, and do not
+  repeat it back in chat.
 - Read `get_test_case_template` before defining a case. Map acceptance criteria
   to observable checkpoints with unique `id`, `expected`, `scope`, `required`,
   and `method` fields; use at most 12 checkpoints and at least one required.
@@ -123,8 +135,9 @@ mobile testing workflow for this repository.
 - Preserve Scout's purchase, consent, credential, and external-app safeguards.
   `allow_consent` is not billing authorization. Do not use another controller to
   bypass a blocked action. Report unsupported behavior as a capability gap.
-- Keep credentials in the local provider or `.env`; never print them or include
-  them in chat, case definitions, traces, or fixture bodies.
+- Keep credentials in the local provider or `.env`, or pass an account the user gave in the
+  prompt as `test_email`/`test_password` for one run; never print them or include them in
+  chat replies, case definitions, traces, or fixture bodies.
 - Diagnose Scout failures using its actual tool errors, local logs, and documented
   setup. Distinguish dashboard, bridge, authentication, workspace, Appium/device,
   app/build, and proxy/CA failures. Do not assume a diagnostic tool exists or

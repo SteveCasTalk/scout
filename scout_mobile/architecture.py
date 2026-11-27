@@ -17,7 +17,7 @@ LAYERS:tuple[tuple[str,str,tuple[str,...]],...]=(
     ('runtime_services','Run-time side services the engine can start: network sandbox and recording.',
      ('sandbox','sandbox_routing','sandbox_recording','sandbox_addon','sandbox_recording_addon','sandbox_worker','sandbox_variants','run_analysis')),
     ('engine','Run orchestration: the node pipeline, the run session, leases, lifecycle, capabilities.',
-     ('engine','agent','execution_runtime','lifecycle','device_lease','capabilities')),
+     ('engine','agent','execution_runtime','lifecycle','device_lease','capabilities','driver')),
     ('application','Job and session management, dashboard sync.',
      ('dashboard_client','dashboard_runtime','dashboard_jobs','library_sessions','project_report')),
     ('interfaces','Entry points: CLI, MCP server, local device bridge.',

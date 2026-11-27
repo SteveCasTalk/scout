@@ -12,6 +12,11 @@ def getenv(name: str, default: str | None = None) -> str | None:
     legacy = name.replace('SCOUT_', 'JEV_', 1) if name.startswith('SCOUT_') else name
     return os.environ.get(legacy, default)
 
+def named_account(name: str) -> tuple[str, str]:
+    """A test account kept in the local provider as SCOUT_ACCOUNT_<NAME>_EMAIL / _PASSWORD; empty when not set."""
+    key = 'SCOUT_ACCOUNT_' + name.upper()
+    return (getenv(key + '_EMAIL', '') or '').strip(), getenv(key + '_PASSWORD', '') or ''
+
 def screen_recording_enabled() -> bool:
     """Video evidence is off unless SCOUT_SCREEN_RECORDING is explicitly enabled."""
     return (getenv('SCOUT_SCREEN_RECORDING', '') or '').strip().lower() in {'1', 'true', 'yes', 'on'}

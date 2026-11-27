@@ -16,6 +16,11 @@ from .config import screen_recording_enabled
 BOUNDS = re.compile(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]')
 SENSITIVE = re.compile(r'password|passcode|pin|email|username|e-mail|account', re.I)
 GENERIC_LABELS = {'background','root','decor view','decorview','content','container','view'}
+# EditText and its framework subclasses (AutoCompleteTextView, MultiAutoCompleteTextView, SearchView$SearchAutoComplete).
+TEXT_INPUT_CLASS = re.compile(r'EditText|AutoCompleteTextView')
+
+def text_input_class(cls:str) -> bool:
+    return bool(TEXT_INPUT_CLASS.search(cls or ''))
 
 class DeviceError(RuntimeError):
     pass
@@ -318,7 +323,7 @@ class AndroidDevice:
             rect=tuple(map(int,bounds.groups()))
             if rect[2]<=rect[0] or rect[3]<=rect[1]:continue
             cls=a.get('class','')
-            editable='EditText' in cls or a.get('editable')=='true'
+            editable=text_input_class(cls) or a.get('editable')=='true'
             tappable=a.get('clickable')=='true' or a.get('checkable')=='true' or editable
             if not tappable:continue
             label=label_of(node)
