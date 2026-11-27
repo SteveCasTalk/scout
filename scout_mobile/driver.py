@@ -30,7 +30,8 @@ from .config import ROOT
 from .device import DeviceError, Element, Screen, TargetCovered
 from .execution_runtime import ExecutionBlocked, check_text_entry
 from .model import is_credential_field
-from .safety import CREDENTIAL_MANAGER, GUARD_TEXT, PRIVATE_CODE_FIELD, RISKY, SWIPE_INSTRUCTION, known_credential_prompt
+from .safety import (CONSENT_GATE, CONSENT_WORD, CREDENTIAL_MANAGER, GUARD_TEXT, PRIVATE_CODE_FIELD, RISKY, SWIPE_INSTRUCTION,
+                     known_credential_prompt)
 from .skill_import import draft_path
 
 SCHEMA_VERSION = 1
@@ -38,6 +39,7 @@ REF = re.compile(r'^@(s[0-9a-f]{10}):e([1-9]\d{0,3})$')
 PACKAGE = re.compile(r'^[A-Za-z0-9_.-]{3,240}$')
 SETTLE_SECONDS = {'TAP': 4.0, 'TYPE_TEXT': 4.0, 'CLEAR_TEXT': 2.0, 'BACK': 4.0, 'SWIPE': 1.5}
 MAX_SNAPSHOTS = 16
+FOCUS_SETTLE_SECONDS = 2.5
 MAX_ACTIONS = 200
 IDLE_SECONDS = 15 * 60
 TEXT_LIMIT = 4000
@@ -284,7 +286,10 @@ class DriverSession:
             raise DriverError('SWIPE_INSTRUCTION', 'A swipe-up instruction is visible; the controls behind it may be covered.', 'Swipe up first (mobile_swipe direction=up).')
         if self.platform == 'iOS' and not agent.config.allow_consent and self.device.has_alert(screen) and not DENY_LABEL.fullmatch(label.strip()):
             raise DriverError('IOS_ALERT', 'An iOS system alert needs an explicit permission choice.', 'Ask the user; start the session with allow_consent only when they authorize accepting it.', retry='never')
-        if agent.consent_confirmation_required(label, screen.text) and not agent.config.allow_consent:
+        # Stricter than the pipeline's exact-label rule: the host picks every tap, so on a screen showing terms or
+        # consent text, any agree/accept/continue-style control (including an "I have read and agree" checkbox) counts.
+        consent = agent.consent_confirmation_required(label, screen.text) or bool(CONSENT_GATE.search(screen.text) and CONSENT_WORD.search(label))
+        if consent and not agent.config.allow_consent:
             raise DriverError('CONSENT_REQUIRED', 'This is a legal or consent action; explicit user confirmation is required.',
                               'Ask the user; start a session with allow_consent=true only when they authorize accepting it.', retry='never')
         if RISKY.search(label):
@@ -351,10 +356,19 @@ class DriverSession:
         """On Android, focus the field first and confirm the intended field took focus (as the pipeline does)."""
         if self.platform == 'iOS' or element.focused:return element, screen
         self.device.tap(element, screen)
-        focused_screen, foreground = self._fresh()
-        self._require_in_app(focused_screen, foreground)
-        focused = self.agent.focused_text_field(focused_screen, element)
-        if focused is None:raise DeviceError('The intended text field did not gain focus.')
+        # Focusing opens the keyboard, which can slide the field (a bottom sheet moves up). Use the field only once
+        # two observations agree on its bounds; an earlier read would locate it where it no longer is.
+        deadline, previous = time.monotonic() + FOCUS_SETTLE_SECONDS, None
+        while True:
+            focused_screen, foreground = self._fresh()
+            self._require_in_app(focused_screen, foreground)
+            focused = self.agent.focused_text_field(focused_screen, element)
+            if focused is not None and previous is not None and focused.bounds == previous.bounds:break
+            if time.monotonic() >= deadline:
+                if focused is None:raise DeviceError('The intended text field did not gain focus.')
+                break
+            previous = focused
+            time.sleep(.2)
         return focused, focused_screen
 
     def type(self, ref: str, text: str | None = None, credential: str | None = None) -> dict[str, Any]:

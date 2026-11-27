@@ -5,7 +5,10 @@ import re
 GUARD_TEXT='This application is not supported on rooted devices or emulators.'
 RISKY=re.compile(r'\b(?:pay|purchase|buy|transfer|delete account|subscribe|withdraw)\b',re.I)
 CONSENT_GATE=re.compile(r'\b(?:user agreement|terms of (?:use|service)|privacy policy|consent|personal data processing)\b',re.I)
-CONSENT_ACTION=re.compile(r'^\s*(?:i\s+agree|agree(?:\s+and\s+continue)?|accept(?:\s+all)?|continue\s+and\s+accept|allow|authorize|consent|grant|start|continue|confirm|submit|yes)\s*$',re.I)
+# Joined as "and", "&" or "+": "Agree & continue" accepted Twomi's terms when only "and" was recognized.
+CONSENT_ACTION=re.compile(r'^\s*(?:i\s+agree|agree(?:\s*(?:and|&|\+)\s*continue)?|accept(?:\s+all)?(?:\s*(?:and|&|\+)\s*continue)?|continue\s*(?:and|&|\+)\s*accept|allow|authorize|consent|grant|start|continue|confirm|submit|yes)\s*$',re.I)
+# Driver mode is stricter: on a consent screen, any control whose label carries one of these words is consent.
+CONSENT_WORD=re.compile(r'\b(?:agree|accept|consent|allow|authori[sz]e|grant|continue|confirm|submit|start|yes)\b',re.I)
 EMAIL_VALUE=re.compile(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b',re.I)
 EMAIL_FIELD=re.compile(r'email|e-mail|username|user name|account',re.I)
 PASSWORD_FIELD=re.compile(r'password|passcode|pass word|passwd',re.I)

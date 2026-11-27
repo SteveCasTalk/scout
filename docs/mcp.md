@@ -293,7 +293,7 @@ pipeline. Each guard has its own error code:
 | Guard | Error code |
 |---|---|
 | Action outside the target app | `APP_BOUNDARY` |
-| Consent or legal action | `CONSENT_REQUIRED` |
+| Consent or legal action. Stricter than in runs: on a screen showing terms or consent text, any agree, accept, consent or continue-style control is refused, including an "I have read and agree" checkbox. | `CONSENT_REQUIRED` |
 | Purchase, transfer, subscription, withdrawal or account deletion | `CONSEQUENTIAL_CONTROL` |
 | iOS system alert | `IOS_ALERT` |
 | Visible swipe instruction | `SWIPE_INSTRUCTION` |

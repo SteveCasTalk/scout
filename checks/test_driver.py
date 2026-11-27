@@ -158,6 +158,18 @@ class DriverTests(unittest.TestCase):
         allowed, fake = self.start(screen(button('I agree'), text='Terms of Service · I agree'), allow_consent=True)
         self.assertTrue(driver.call(allowed['data']['session_id'], 'tap', 'tap', self.ref(allowed, 'I agree'))['ok'])
 
+    def test_consent_variants_found_on_device_are_refused(self):
+        # Twomi's terms screen (2026-11-27): "Agree & continue" was tapped because only "and" was recognized.
+        terms = ('A few things to know · I have read and agree to the Terms of Use and Privacy Policy, and consent to the '
+                 'processing of my personal data. · Agree & continue')
+        reply, fake = self.start(screen(button('I have read and agree to the Terms of Use and Privacy Policy, and consent to the processing of my personal data.'),
+                                        button('Agree & continue'), text=terms))
+        session = reply['data']['session_id']
+        for label in ('Agree & continue', 'I have read and agree to the Terms of Use and Privacy Policy, and consent to the processing of my personal data.'):
+            refused = driver.call(session, 'tap', 'tap', self.ref(reply, label))
+            self.assertEqual(refused['error']['code'], 'CONSENT_REQUIRED', label)
+        self.assertFalse(any(call[0] == 'tap' for call in fake.calls))
+
     def test_actions_outside_the_target_app_are_refused(self):
         reply, fake = self.start(screen(button('Continue')))
         fake.package = 'com.android.settings'
@@ -216,6 +228,19 @@ class DriverTests(unittest.TestCase):
         self.assertNotIn('Secret-123', trace)
         self.assertTrue(any('credential' in line for line in ended['typed_path']['unsupported']))
 
+    def test_typing_waits_for_a_field_that_slides_when_the_keyboard_opens(self):
+        # Twomi's comment sheet (2026-11-27): focusing moved the field up while it was being located.
+        unfocused = screen(field('Write a comment', bounds=(208, 2063, 872, 2198), focused=False))
+        reply, fake = self.start(unfocused)
+        moving = [screen(field('Write a comment', bounds=(208, 1500, 872, 1635))), screen(field('Write a comment', bounds=(208, 1190, 872, 1325)))]
+        settled = screen(field('Write a comment', bounds=(208, 1190, 872, 1325)))
+        frames = iter([unfocused] + moving + [settled] * 10)
+        fake.observe = lambda retries=2: next(frames)
+        typed = driver.call(reply['data']['session_id'], 'type', 'type', self.ref(reply, 'Write a comment'), 'hello', None)
+        self.assertTrue(typed['ok'], typed)
+        name, target, value = fake.calls[-1]
+        self.assertEqual((name, target.bounds, value), ('type_text', (208, 1190, 872, 1325), 'hello'))
+
     def test_end_writes_exploration_result_releases_lease_and_drafts_typed_path(self):
         reply, fake = self.start(screen(button('Search', 'app:id/search'), field('Query', 'app:id/query', value='')))
         session = reply['data']['session_id']
@@ -255,6 +280,15 @@ class DriverTests(unittest.TestCase):
 
     def test_unknown_session_and_ended_session(self):
         self.assertEqual(driver.call('dmissing', 'snapshot', 'snapshot')['error']['code'], 'SESSION_NOT_FOUND')
+
+
+class ConsentPatternTests(unittest.TestCase):
+    def test_pipeline_rule_recognizes_ampersand_and_plus_joins(self):
+        from scout_mobile.agent import Agent
+        terms = 'Please accept the Terms of Use and Privacy Policy'
+        for label in ('Agree & continue', 'Agree and continue', 'Agree + Continue', 'Accept & continue', 'Continue & accept'):
+            self.assertTrue(Agent.consent_confirmation_required(label, terms), label)
+        self.assertFalse(Agent.consent_confirmation_required('Agree & continue', 'Choose a video to watch'))
 
 
 class TextInputClassTests(unittest.TestCase):
