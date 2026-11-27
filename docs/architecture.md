@@ -19,7 +19,7 @@ module has no layer.
 | 2 | contracts | Pure policy and schema | `execution_contract`, `network_contract`, `temporal`, `validation`, `evidence`, `safety`, `media_verification` |
 | 3 | intelligence | Model-backed judgment | `model`, `checkpoints`, `starting_conditions`, `platform_comparison` |
 | 4 | runtime_services | Side services a run can start | `sandbox*`, `sandbox_variants`, `run_analysis` |
-| 5 | engine | Run orchestration | `engine/` (pipeline + nodes), `agent`, `execution_runtime`, `lifecycle`, `device_lease`, `capabilities` |
+| 5 | engine | Run orchestration | `engine/` (pipeline + nodes), `agent`, `execution_runtime`, `lifecycle`, `device_lease`, `capabilities`, `driver` (host-driven sessions) |
 | 6 | application | Jobs, sessions, dashboard sync | `dashboard_client`, `dashboard_runtime`, `dashboard_jobs`, `library_sessions` |
 | 7 | interfaces | Entry points | `__main__` (CLI), `mcp_server`, `local_server` |
 

@@ -6,7 +6,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from .device import BOUNDS, DeviceError, Element
+from .device import BOUNDS, DeviceError, Element, text_input_class
 from .execution_contract import Selector
 from .model import is_credential_field
 from .safety import PRIVATE_CODE_FIELD
@@ -28,7 +28,7 @@ def locate(screen, selector, tap=False):
     matches=[]
     def element(a,label,rect,actionable):
         cls=a.get('class','')
-        return Element('typed','textbox' if 'EditText' in cls else 'control',label,a.get('resource-id',''),cls,'',rect,('TAP',) if actionable else (),False,password=a.get('password')=='true')
+        return Element('typed','textbox' if text_input_class(cls) else 'control',label,a.get('resource-id',''),cls,'',rect,('TAP',) if actionable else (),False,password=a.get('password')=='true')
     def onscreen(a):
         b=BOUNDS.fullmatch(a.get('bounds',''))
         if not b:return None
@@ -216,13 +216,13 @@ class Protocol:
             record['text_entry']=getattr(a.device,'last_text_entry',None)
             # Device adapters compare trimmed values, so confirm whitespace the case depends on from the raw hierarchy.
             fresh,_=self.observe()
-            if not any('EditText' in node.get('class','') and node.get('text','')==action['text'] for node in ET.fromstring(fresh.xml).iter()):
+            if not any(text_input_class(node.get('class','')) and node.get('text','')==action['text'] for node in ET.fromstring(fresh.xml).iter()):
                 raise ObservationIncomplete('The text field does not hold exactly the requested text.')
         elif op=='CLEAR_TEXT':
             record['transport']=a.device.clear_text(element)
             # A failed clear must not read as an app result.
             fresh,_=self.observe()
-            if element.value and any('EditText' in node.get('class','') and node.get('text','').strip()==element.value for node in ET.fromstring(fresh.xml).iter()):
+            if record['transport']!='hint only' and element.value and any(text_input_class(node.get('class','')) and node.get('text','').strip()==element.value for node in ET.fromstring(fresh.xml).iter()):
                 raise ObservationIncomplete('The text field still holds its previous text after clearing.')
         elif op=='RESTART_APP':
             a.device.restart_app(action['package']);record['transport']='adb'

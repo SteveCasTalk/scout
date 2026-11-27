@@ -171,6 +171,10 @@ def draft_path(trace: list[dict[str, Any]], package: str, texts: list[str] | Non
         operation, label = entry.get('operation'), str(entry.get('label') or '')
         screen = str((entry.get('screen') or {}).get('text') or '')
         step = entry.get('step')
+        if entry.get('error'):
+            review.append(f'Step {step}: left out {operation} {label!r}, which failed: {entry["error"]}')
+            before = screen or before
+            continue
         if entry.get('stale') or (operation in {'TAP', 'BACK'} and entry.get('page_changed') is False):
             if operation in {'TAP', 'BACK'}:
                 review.append(f'Step {step}: left out {operation} {label!r}, which changed nothing.')
@@ -179,15 +183,18 @@ def draft_path(trace: list[dict[str, Any]], package: str, texts: list[str] | Non
         if operation == 'OBSERVE':
             before = screen
             continue
-        if operation in {'SWIPE_UP', 'SWIPE_DOWN', 'SET_VALUE', 'TAP_BURST', 'DRAG'}:
+        if operation in {'SWIPE_UP', 'SWIPE_DOWN', 'SWIPE_LEFT', 'SWIPE_RIGHT', 'SET_VALUE', 'TAP_BURST', 'DRAG'}:
             unsupported.append(f'Step {step}: {operation} has no recorded target; add it by hand from the observed screen.')
             before = screen or before
             continue
-        if operation not in {'TAP', 'BACK', 'TYPE_TEXT'}:
+        if operation not in {'TAP', 'BACK', 'TYPE_TEXT', 'CLEAR_TEXT', 'SWIPE'}:
             continue
-        action: dict[str, Any] = {'id': f'step_{step}', 'operation': operation, 'package': package}
+        # Driver-mode traces record the app each step acted in; pipeline traces act only in the target package.
+        action: dict[str, Any] = {'id': f'step_{step}', 'operation': operation, 'package': str(entry.get('foreground') or package)}
         resource = str(entry.get('resource_id') or '')
-        if operation == 'TAP':
+        recorded_class = str(entry.get('class_name') or '')
+        field_class = recorded_class if recorded_class.endswith(('EditText', 'AutoCompleteTextView')) else 'android.widget.EditText'
+        if operation in {'TAP', 'SWIPE'}:
             prefix = _TRAILING_COUNT.sub('', label).strip()
             if resource:
                 action['selector'] = {'resource_id': resource}
@@ -197,12 +204,20 @@ def draft_path(trace: list[dict[str, Any]], package: str, texts: list[str] | Non
             elif label:
                 action['selector'] = {'text': label}
             else:
-                unsupported.append(f'Step {step}: TAP has no label or resource ID.')
+                unsupported.append(f'Step {step}: {operation} has no label or resource ID.')
                 before = screen or before
                 continue
             action['appear_ms'] = 8000
+            if operation == 'SWIPE':
+                if entry.get('direction') not in {'left', 'right', 'up', 'down'}:
+                    unsupported.append(f'Step {step}: SWIPE has no recorded direction.')
+                    before = screen or before
+                    continue
+                action['direction'] = entry['direction']
+        elif operation == 'CLEAR_TEXT':
+            action['selector'] = {'resource_id': resource} if resource else {'class_name': field_class}
         elif operation == 'TYPE_TEXT':
-            action['selector'] = {'resource_id': resource} if resource else {'class_name': 'android.widget.EditText'}
+            action['selector'] = {'resource_id': resource} if resource else {'class_name': field_class}
             if not pending:
                 unsupported.append(f'Step {step}: the text typed here was not recorded; pass it in texts, in order.')
                 before = screen or before
@@ -210,13 +225,14 @@ def draft_path(trace: list[dict[str, Any]], package: str, texts: list[str] | Non
             action['text'] = pending.pop(0)
         known = before.split(' · ')
         fresh = [item for item in screen.split(' · ') if len(item) >= 4 and not item.replace(',', '').replace('.', '').isdigit() and item not in known]
-        if fresh and operation != 'TYPE_TEXT':
+        if fresh and operation not in {'TYPE_TEXT', 'CLEAR_TEXT'}:
             action.update(wait_text=fresh[0][:240], timeout_ms=10000)
         actions.append(action)
         before = screen or before
     if pending:
         review.append(f'{len(pending)} supplied text value(s) had no TYPE_TEXT step.')
-    needed = sorted({'text_entry'} if any(item['operation'] == 'TYPE_TEXT' for item in actions) else set())
+    needed = sorted(({'text_entry'} if any(item['operation'] in {'TYPE_TEXT', 'CLEAR_TEXT'} for item in actions) else set())
+                    | ({'target_gestures'} if any(item['operation'] == 'SWIPE' for item in actions) else set()))
     review.append('Add REQUIRE steps for the account and test data this case depends on, then the final checkpoints.')
     return {'execution': {'schema_version': 2, 'required_capabilities': needed, 'actions': actions, 'finish': 'verify', 'timeout_seconds': 300}, 'review': review, 'unsupported': unsupported}
 

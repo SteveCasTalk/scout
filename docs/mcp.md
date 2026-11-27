@@ -260,6 +260,66 @@ Evidence exports are restricted to `result.json`, `trace.json`, `jev-output.json
 
 The user can ask in natural language, for example: “On the connected Samsung, sign in to AI Avatar using my configured test account and confirm the home screen appears.” The assistant translates that request into `goal`, ordered `steps`, and `expected` fields and calls `run_android_test_from_prompt` directly. If the runner returns `awaiting_input`, the assistant uses the explicit user-provided value with `enter_text`; for sensitive authentication values it relies on the local configured account instead. It can then call `prepare_run_verification`, inspect screenshots with `get_run_screenshot` when needed, record the independent verdict, and export the evidence bundle. No saved case is required. If multiple devices are connected, the assistant should call `list_android_devices` and ask the user which device to use before starting.
 
+## Driver mode (host-driven, no model inside Scout)
+
+Driver mode lets the MCP host agent choose every action, one at a time, while Scout keeps the device, the
+safeguards and the evidence. Scout runs no decision model (no Jev) in this mode. It follows the
+snapshot-and-ref design of agent-desktop.
+
+| Tool | What it does |
+|---|---|
+| `mobile_session_start` | Takes the device lease, launches the app, and returns the first snapshot. Parameters: `package`, `platform`, `serial`, `allowed_packages`, `allow_consent`. |
+| `mobile_snapshot` / `mobile_find` | Observes the screen. Controls come back with refs such as `@s1a2b3c4d5:e3`, plus page text and the foreground app. `include_bounds=true` adds bounds and class. |
+| `mobile_tap`, `mobile_type`, `mobile_clear`, `mobile_swipe`, `mobile_back` | Performs one action, waits for the screen to settle, and returns the settled screen as a new snapshot. |
+| `mobile_wait` | Polls until `text` appears or `absent_text` disappears. Use it instead of sleeping. On a `TIMEOUT` error it also returns the last snapshot. |
+| `mobile_screenshot` | Captures the screen as evidence, following the same privacy policy as runs. |
+| `mobile_session_end` | Writes `result.json` and `trace.json`, releases the device, and returns a typed-path draft (Android). |
+| `mobile_list_sessions` | Lists the active sessions. |
+
+**Replies.** Every reply is one envelope: `ok`, then `data` or `error`. An error has `code`, `message`,
+`suggestion` and `disposition` (`delivery`: `not_delivered` or `unknown`; `retry`: `safe`, `unsafe`, `never`
+or `after_user_action`). Retry only when `retry` is `safe`.
+
+**Refs fail closed and are never guessed.**
+- A ref belongs to one snapshot.
+- On an unchanged screen, it resolves to the same element.
+- After the screen changes, it resolves only if it was unique when captured and exactly one live control has
+  the same role, class, resource ID and label. Bounds, values and checked state are never used as identity.
+- Otherwise the action fails with `STALE_REF` or `AMBIGUOUS_TARGET`, and the reply carries a fresh snapshot.
+
+**Safeguards.** Every action re-observes the screen first, then passes the same locked guards as the run
+pipeline. Each guard has its own error code:
+
+| Guard | Error code |
+|---|---|
+| Action outside the target app | `APP_BOUNDARY` |
+| Consent or legal action | `CONSENT_REQUIRED` |
+| Purchase, transfer, subscription, withdrawal or account deletion | `CONSEQUENTIAL_CONTROL` |
+| iOS system alert | `IOS_ALERT` |
+| Visible swipe instruction | `SWIPE_INSTRUCTION` |
+| Repeating an action that changed nothing | `NO_PROGRESS` |
+| Credential field or private code | `CREDENTIAL_FIELD` |
+
+Rules for credentials and app boundaries:
+- Credentials are typed only with `credential="email"` or `credential="password"`. Scout reads
+  `SCOUT_TEST_EMAIL` or `SCOUT_TEST_PASSWORD` from `.env`; the value never passes through the host.
+- `mobile_back` is the one action allowed while another app is in front.
+- `allowed_packages` declares up to five other apps the user approved acting in, such as a helper package the
+  app opens for search. Store checkout, Google Play services and credential managers can never be allowed.
+
+**Sessions and evidence.**
+- A session holds the device lease, so no other Scout run can use the device until `mobile_session_end`, or
+  until the session is idle for 15 minutes.
+- A session allows 200 actions.
+- Evidence is written to `runner-output/<run_id>` like any other run. The status is `Inconclusive`, with reason
+  code `exploration_only`, because a host-driven session is exploration evidence, not a verdict.
+- The typed-path draft records the package each step acted in. Steps in other packages need `external_flows`
+  before the path can run. Credential steps are listed as unsupported: start the case signed in and use a
+  `REQUIRE` step with `require_account` instead. Review the draft, then save it with
+  `mark_generated_case_explored`.
+- Driver mode does not change Android autofill or notification settings. A recognized save-password sheet is
+  dismissed the same way runs dismiss it.
+
 ## iOS
 
 Use `list_ios_devices`, then `run_mobile_test_from_prompt` with `platform="iOS"`

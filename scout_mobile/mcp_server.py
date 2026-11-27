@@ -1567,6 +1567,119 @@ def run_android_test(case_file: str, package: str | None = None, serial: str | N
     """Compatibility entry point. Prefer run_mobile_test for platform-aware exported cases."""
     return run_mobile_test(case_file, package, serial, max_steps, adb, authorizations=authorizations)
 
+# ----- Driver mode: the host agent drives the device one action at a time; Scout runs no model. -----
+
+@mcp.tool()
+def mobile_session_start(package: str, platform: Literal['Android', 'iOS'] = 'Android', serial: str | None = None,
+                         title: str = '', launch: bool = True, allow_consent: bool = False, allowed_packages: list[str] | None = None,
+                         adb: str | None = None) -> dict[str, Any]:
+    """Start a driver-mode session: you choose every action, Scout runs no model. Holds the device lease until
+    mobile_session_end (or 15 idle minutes), so no other Scout run can use the device meanwhile.
+
+    Loop: read the snapshot, act on one of its refs (mobile_tap / mobile_type / mobile_swipe ...), read the snapshot
+    each action returns. Refs look like `@s1a2b3c4d5:e3` and belong to one snapshot; they fail closed with STALE_REF
+    or AMBIGUOUS_TARGET instead of guessing, so take a fresh snapshot then. Every reply is one envelope:
+    `ok`, then `data` or `error` with `code`, `suggestion` and `disposition.retry` (retry only when it is `safe`).
+    Purchase, consent, credential and app-boundary guards apply to every action. allow_consent=true only when the user
+    explicitly authorizes accepting the app's terms or permission prompts. Actions run only while the target app is
+    in front (mobile_back is also allowed outside it); allowed_packages declares up to 5 other apps the user approved
+    acting in, such as a helper package the app opens (never a store or credential manager).
+    Evidence goes to runner-output/<run_id>.
+    """
+    load_local_env()
+    adb_path = adb or getenv("ADB_PATH") or "adb"
+    try:
+        device_serial = _select_device(adb_path, serial, platform)
+    except ValueError as exc:
+        return {'version': 1, 'ok': False, 'command': 'session_start', 'error': {'code': 'DEVICE_NOT_FOUND', 'message': str(exc), 'suggestion': 'List devices and pass serial explicitly.', 'disposition': {'delivery': 'not_delivered', 'retry': 'never'}}}
+    from . import driver
+    return driver.start(platform, (package or '').strip(), device_serial, adb_path, title, allow_consent, launch, allowed_packages)
+
+
+@mcp.tool()
+def mobile_snapshot(session_id: str, include_bounds: bool = False) -> dict[str, Any]:
+    """Observe the current screen: interactive controls with refs, page text and the foreground app."""
+    from . import driver
+    return driver.call(session_id, 'snapshot', 'snapshot', include_bounds)
+
+
+@mcp.tool()
+def mobile_find(session_id: str, query: str) -> dict[str, Any]:
+    """Take a snapshot and return the controls whose label or resource ID contains `query` (case-insensitive)."""
+    from . import driver
+    return driver.call(session_id, 'find', 'find', query)
+
+
+@mcp.tool()
+def mobile_tap(session_id: str, ref: str) -> dict[str, Any]:
+    """Tap the control `ref` names. Returns the settled screen as a new snapshot."""
+    from . import driver
+    return driver.call(session_id, 'tap', 'tap', ref)
+
+
+@mcp.tool()
+def mobile_type(session_id: str, ref: str, text: str | None = None, credential: Literal['email', 'password'] | None = None) -> dict[str, Any]:
+    """Replace a text field's content. Pass ordinary `text` the user asked for, or `credential` to type the local
+    SCOUT_TEST_EMAIL / SCOUT_TEST_PASSWORD from .env (never pass credential values as text)."""
+    from . import driver
+    return driver.call(session_id, 'type', 'type', ref, text, credential)
+
+
+@mcp.tool()
+def mobile_clear(session_id: str, ref: str) -> dict[str, Any]:
+    """Empty a text field."""
+    from . import driver
+    return driver.call(session_id, 'clear', 'clear', ref)
+
+
+@mcp.tool()
+def mobile_swipe(session_id: str, direction: Literal['up', 'down', 'left', 'right'], ref: str | None = None) -> dict[str, Any]:
+    """Swipe across the screen, or inside the control `ref` names (a pager or carousel). `up` scrolls content up."""
+    from . import driver
+    return driver.call(session_id, 'swipe', 'swipe', direction, ref)
+
+
+@mcp.tool()
+def mobile_back(session_id: str) -> dict[str, Any]:
+    """Android: system Back. iOS: taps the screen's single Back button, or refuses."""
+    from . import driver
+    return driver.call(session_id, 'back', 'back')
+
+
+@mcp.tool()
+def mobile_wait(session_id: str, text: str | None = None, absent_text: str | None = None, timeout_ms: int = 5000, poll_ms: int = 250) -> dict[str, Any]:
+    """Poll until `text` is visible or `absent_text` is gone (case-insensitive), up to timeout_ms. Use this instead of
+    sleeping. A TIMEOUT error carries the last snapshot."""
+    from . import driver
+    return driver.call(session_id, 'wait', 'wait', text, absent_text, timeout_ms, poll_ms)
+
+
+@mcp.tool()
+def mobile_screenshot(session_id: str) -> Image:
+    """Capture the current screen as evidence and return it. Screens with credential fields or values are withheld."""
+    from . import driver
+    try:
+        _, data = driver.screenshot(session_id)
+    except driver.DriverError as exc:
+        raise ValueError(f'{exc.code}: {exc.message}') from None
+    return Image(data=data, format='png')
+
+
+@mcp.tool()
+def mobile_session_end(session_id: str) -> dict[str, Any]:
+    """End the session: write result.json and trace.json, release the device and lease, and return a typed-path draft
+    (Android) built from the actions. Review the draft, then save it with mark_generated_case_explored or a case."""
+    from . import driver
+    return driver.end(session_id)
+
+
+@mcp.tool()
+def mobile_list_sessions() -> dict[str, Any]:
+    """List active driver-mode sessions in this MCP server."""
+    from . import driver
+    return {'sessions': driver.sessions()}
+
+
 run_android_test_from_prompt = run_mobile_test_from_prompt
 mcp.add_tool(run_mobile_test_from_prompt, name="run_android_test_from_prompt", description="Compatibility name for run_mobile_test_from_prompt; defaults to Android.")
 

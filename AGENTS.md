@@ -53,6 +53,12 @@ mobile testing workflow for this repository.
 
 ## Scout execution and verification workflow
 
+- For step-by-step exploration that you drive yourself, use driver mode
+  (`mobile_session_start`, then `mobile_snapshot` / `mobile_tap` / `mobile_type` /
+  `mobile_wait`, then `mobile_session_end`). Act only on refs from the latest
+  snapshot, take a new snapshot after `STALE_REF` or `AMBIGUOUS_TARGET`, retry
+  only when `disposition.retry` is `safe`, and always end the session so the
+  device lease is released. Its evidence is exploration-only, never a verdict.
 - For exploration, use `run_mobile_test_from_prompt` with the selected
   `platform`, `package`, `serial`, a concise goal, and a bounded `max_steps`.
   Ground navigation steps in observed controls. Inspect `get_run_result` and
