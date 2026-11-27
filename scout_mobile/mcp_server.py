@@ -1572,7 +1572,7 @@ def run_android_test(case_file: str, package: str | None = None, serial: str | N
 @mcp.tool()
 def mobile_session_start(package: str, platform: Literal['Android', 'iOS'] = 'Android', serial: str | None = None,
                          title: str = '', launch: bool = True, allow_consent: bool = False, allowed_packages: list[str] | None = None,
-                         adb: str | None = None) -> dict[str, Any]:
+                         project: str = 'General', ticket_key: str = '', adb: str | None = None) -> dict[str, Any]:
     """Start a driver-mode session: you choose every action, Scout runs no model. Holds the device lease until
     mobile_session_end (or 15 idle minutes), so no other Scout run can use the device meanwhile.
 
@@ -1584,7 +1584,8 @@ def mobile_session_start(package: str, platform: Literal['Android', 'iOS'] = 'An
     explicitly authorizes accepting the app's terms or permission prompts. Actions run only while the target app is
     in front (mobile_back is also allowed outside it); allowed_packages declares up to 5 other apps the user approved
     acting in, such as a helper package the app opens (never a store or credential manager).
-    Evidence goes to runner-output/<run_id>.
+    Evidence goes to runner-output/<run_id>; `project` and `ticket_key` file it in the dashboard, where the
+    dashboard's sync imports it as a "Driver session" run.
     """
     load_local_env()
     adb_path = adb or getenv("ADB_PATH") or "adb"
@@ -1593,7 +1594,7 @@ def mobile_session_start(package: str, platform: Literal['Android', 'iOS'] = 'An
     except ValueError as exc:
         return {'version': 1, 'ok': False, 'command': 'session_start', 'error': {'code': 'DEVICE_NOT_FOUND', 'message': str(exc), 'suggestion': 'List devices and pass serial explicitly.', 'disposition': {'delivery': 'not_delivered', 'retry': 'never'}}}
     from . import driver
-    return driver.start(platform, (package or '').strip(), device_serial, adb_path, title, allow_consent, launch, allowed_packages)
+    return driver.start(platform, (package or '').strip(), device_serial, adb_path, title, allow_consent, launch, allowed_packages, project, ticket_key)
 
 
 @mcp.tool()

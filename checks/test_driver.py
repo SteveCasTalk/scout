@@ -78,7 +78,7 @@ class DriverTests(unittest.TestCase):
     def end_all(self):
         for item in driver.sessions():driver.end(item['session_id'])
 
-    def start(self, first, serial='fake-1', allow_consent=False, allowed_packages=None):
+    def start(self, first, serial='fake-1', allow_consent=False, allowed_packages=None, **extra):
         fake = FakeDevice(first)
         original = driver.DriverSession.__init__
 
@@ -86,7 +86,7 @@ class DriverTests(unittest.TestCase):
             original(session, *args, **kwargs)
             session.agent.device = session.device = fake
         with patch.object(driver.DriverSession, '__init__', init):
-            reply = driver.start('Android', PACKAGE, serial, allow_consent=allow_consent, allowed_packages=allowed_packages)
+            reply = driver.start('Android', PACKAGE, serial, allow_consent=allow_consent, allowed_packages=allowed_packages, **extra)
         return reply, fake
 
     def ref(self, reply, label):
@@ -277,6 +277,13 @@ class DriverTests(unittest.TestCase):
         self.assertIn('snapshot', timed_out)
         fake.current = screen(button('Welcome back'))
         self.assertTrue(driver.call(session, 'wait', 'wait', 'welcome', None, 200, 50)['ok'])
+
+    def test_project_and_ticket_file_the_session_for_dashboard_sync(self):
+        reply, _ = self.start(screen(button('Continue')), project='Twomi', ticket_key='ca-5861')
+        ended = driver.end(reply['data']['session_id'])['data']
+        result = json.loads((self.root / 'runner-output' / ended['run_id'] / 'result.json').read_text())
+        self.assertEqual((result['project'], result['ticket_key'], result['suite']), ('Twomi', 'CA-5861', 'Driver sessions'))
+        self.assertTrue(result['case_id'].startswith('driver-'))  # The bridge lists driver- and prompt- runs for sync.
 
     def test_unknown_session_and_ended_session(self):
         self.assertEqual(driver.call('dmissing', 'snapshot', 'snapshot')['error']['code'], 'SESSION_NOT_FOUND')

@@ -128,7 +128,7 @@ class Handler(BaseHTTPRequestHandler):
                         result = json.loads(result_path.read_text(encoding="utf-8"))
                     except (OSError, json.JSONDecodeError):
                         continue
-                    if not isinstance(result, dict) or not str(result.get("case_id", "")).startswith("prompt-"):
+                    if not isinstance(result, dict) or not str(result.get("case_id", "")).startswith(("prompt-", "driver-")):
                         continue
                     artifacts = [p.name for p in evidence_inventory(folder)]
                     runs.append({"run_id": folder.name, "result": result, "artifacts": artifacts})

@@ -92,7 +92,8 @@ class Snapshot:
 
 class DriverSession:
     def __init__(self, platform: str, package: str, serial: str, adb: str = 'adb', title: str = '',
-                 allow_consent: bool = False, appium_url: str = '', allowed_packages: list[str] | None = None):
+                 allow_consent: bool = False, appium_url: str = '', allowed_packages: list[str] | None = None,
+                 project: str = 'General', ticket_key: str = ''):
         if platform not in {'Android', 'iOS'}:raise DriverError('INVALID_ARGS', 'Platform must be Android or iOS.', retry='never')
         if not PACKAGE.fullmatch(package or ''):raise DriverError('INVALID_ARGS', 'package must be a valid app package or bundle ID.', retry='never')
         extra = list(dict.fromkeys(item.strip() for item in (allowed_packages or [])))
@@ -101,10 +102,13 @@ class DriverSession:
         if any(item in NEVER_ALLOWED for item in extra):
             raise DriverError('INVALID_ARGS', 'Store checkout and credential managers can never be allowed packages.', retry='never')
         self.allowed_packages = extra
+        project, ticket_key = (project or 'General').strip(), (ticket_key or '').strip().upper()
+        if not 1 <= len(project) <= 100 or len(ticket_key) > 40:
+            raise DriverError('INVALID_ARGS', 'project must be 1–100 characters and ticket_key at most 40.', retry='never')
         self.id = 'd' + secrets.token_hex(6)
         self.platform, self.package, self.serial = platform, package, serial
         output = ROOT / 'runner-output' / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-        case = {'id': 'driver-' + self.id, 'revision': 1, 'project': 'General', 'platform': platform, 'package': package,
+        case = {'id': 'driver-' + self.id, 'revision': 1, 'project': project, 'ticket_key': ticket_key, 'platform': platform, 'package': package,
                 'app_id': package, 'title': (title or 'Driver-mode exploration').strip()[:160], 'suite': 'Driver sessions',
                 'goal': 'Host-driven exploration; actions were chosen by the MCP host agent, not by Scout.',
                 'preconditions': ('Allowed packages for this session: ' + ', '.join(extra)) if extra else ''}
@@ -515,10 +519,11 @@ def _expire() -> None:
 
 
 def start(platform: str, package: str, serial: str, adb: str = 'adb', title: str = '', allow_consent: bool = False, launch: bool = True,
-          allowed_packages: list[str] | None = None) -> dict[str, Any]:
+          allowed_packages: list[str] | None = None, project: str = 'General', ticket_key: str = '') -> dict[str, Any]:
     _expire()
     try:
-        session = DriverSession(platform, package, serial, adb, title, allow_consent, allowed_packages=allowed_packages)
+        session = DriverSession(platform, package, serial, adb, title, allow_consent, allowed_packages=allowed_packages,
+                                project=project, ticket_key=ticket_key)
         snapshot = session.start(launch)
     except DriverError as exc:
         return exc.envelope('session_start')
