@@ -177,6 +177,20 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(refused['error']['code'], 'APP_BOUNDARY')
         self.assertFalse(refused['snapshot']['in_app'])
 
+    def test_lock_screen_over_the_app_is_outside_the_app(self):
+        # Samsung lock screen (2026-11-27): Appium still reported the app as foreground, and its PIN field is a password
+        # field, so credential=password would have typed the account password into the device lock screen.
+        pin = ((('<credential field>', 'com.android.systemui:id/pinEntry', (0, 600, 1080, 760)),
+                {'role': 'textbox', 'cls': 'android.widget.EditText', 'focused': True, 'password': True}))
+        reply, fake = self.start(screen(pin, button('1', 'com.android.systemui:id/key1'), text='Enter PIN · 1'))
+        self.assertFalse(reply['data']['snapshot']['in_app'])
+        session = reply['data']['session_id']
+        ref = reply['data']['snapshot']['elements'][0]['ref']
+        refused = driver.call(session, 'type', 'type', ref, None, 'password')
+        self.assertEqual(refused['error']['code'], 'APP_BOUNDARY')
+        self.assertIn('System UI', refused['error']['message'])
+        self.assertFalse(any(call[0] in {'tap', 'type_text'} for call in fake.calls))
+
     def test_back_is_the_one_action_allowed_outside_the_app(self):
         reply, fake = self.start(screen(button('Search')))
         session = reply['data']['session_id']
@@ -285,8 +299,93 @@ class DriverTests(unittest.TestCase):
         self.assertEqual((result['project'], result['ticket_key'], result['suite']), ('Twomi', 'CA-5861', 'Driver sessions'))
         self.assertTrue(result['case_id'].startswith('driver-'))  # The bridge lists driver- and prompt- runs for sync.
 
+    def test_named_account_replaces_the_default_credentials(self):
+        with patch.dict(os.environ, {'SCOUT_ACCOUNT_QA_OWNER_EMAIL': 'owner@example.com', 'SCOUT_ACCOUNT_QA_OWNER_PASSWORD': 'Owner-456'}):
+            reply, fake = self.start(screen(field('Email', 'app:id/email')), account='qa_owner')
+        self.assertEqual(reply['data']['account'], 'qa_owner')
+        session = reply['data']['session_id']
+        self.assertTrue(driver.call(session, 'type', 'type', self.ref(reply, 'Email'), None, 'email')['ok'])
+        self.assertEqual(fake.calls[-1][2], 'owner@example.com')
+        ended = driver.end(session)['data']
+        evidence = ''.join(p.read_text() for p in (self.root / 'runner-output' / ended['run_id']).glob('*.json'))
+        self.assertNotIn('owner@example.com', evidence)
+        missing, _ = self.start(screen(button('Other')), account='nobody')
+        self.assertEqual(missing['error']['code'], 'ACCOUNT_NOT_CONFIGURED')
+
+    def test_account_from_the_prompt_is_used_for_this_session_only(self):
+        reply, fake = self.start(screen(field('Email', 'app:id/email')), test_email='prompt.user@example.com', test_password='Prompt-789')
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['data']['account'], 'from prompt')
+        self.assertNotIn('prompt.user@example.com', json.dumps(reply))
+        session = reply['data']['session_id']
+        self.assertTrue(driver.call(session, 'type', 'type', self.ref(reply, 'Email'), None, 'email')['ok'])
+        self.assertEqual(fake.calls[-1][2], 'prompt.user@example.com')
+        ended = driver.end(session)['data']
+        evidence = ''.join(p.read_text() for p in (self.root / 'runner-output' / ended['run_id']).glob('*.json'))
+        self.assertNotIn('prompt.user@example.com', evidence)
+        self.assertNotIn('Prompt-789', evidence)
+
+    def test_prefilled_email_field_is_recognized_for_the_credential(self):
+        # Twomi after logout (2026-11-27): the email field kept the previous account's address, so its label was
+        # '<editable field>' and credential=email was refused.
+        prefilled = (('<editable field>', '', (0, 200, 1000, 300)), {'role': 'textbox', 'cls': 'android.widget.EditText',
+                                                                     'value': 'previous.user@example.com', 'focused': True})
+        reply, fake = self.start(screen(prefilled, text='Login or Register · Your email · Next'),
+                                 test_email='prompt.user@example.com', test_password='Prompt-789')
+        typed = driver.call(reply['data']['session_id'], 'type', 'type', reply['data']['snapshot']['elements'][0]['ref'], None, 'email')
+        self.assertTrue(typed['ok'], typed)
+        self.assertEqual(fake.calls[-1][2], 'prompt.user@example.com')
+
+    def test_prompt_account_needs_both_values_and_excludes_a_named_account(self):
+        half, _ = self.start(screen(button('Other')), test_email='prompt.user@example.com')
+        self.assertEqual(half['error']['code'], 'INVALID_ARGS')
+        self.assertNotIn('prompt.user@example.com', json.dumps(half))
+        both, _ = self.start(screen(button('Other')), test_email='prompt.user@example.com', test_password='Prompt-789', account='qa_owner')
+        self.assertEqual(both['error']['code'], 'INVALID_ARGS')
+
     def test_unknown_session_and_ended_session(self):
         self.assertEqual(driver.call('dmissing', 'snapshot', 'snapshot')['error']['code'], 'SESSION_NOT_FOUND')
+
+
+class SavedRunPromptAccountTests(unittest.TestCase):
+    def test_bridge_keeps_the_prompt_account_out_of_files_and_signature_and_hands_it_to_the_job(self):
+        import threading, uuid
+        from unittest.mock import Mock
+        from scout_mobile import library_sessions as module
+        case = {'id': str(uuid.uuid4()), 'revision': 1, 'title': 'Login', 'goal': 'Log in', 'steps': 'Log in', 'expected': 'Home',
+                'app_id': PACKAGE, 'platform': 'Android'}
+        client = Mock(); client.url = 'http://localhost:5173'; client.request.return_value = {'cases': [case]}
+        base = {'dashboard_url': client.url, 'workspace_id': str(uuid.uuid4()), 'cases': [{'id': case['id'], 'revision': 1}],
+                'serial': 'synthetic', 'conditions_confirmed': True, 'client_capabilities': {'contract_versions': [1, 2], 'features': []}}
+        request_id = str(uuid.uuid4())
+        with tempfile.TemporaryDirectory() as folder, patch.object(module, 'STORE', Path(folder)), \
+                patch.object(module, 'DashboardClient', return_value=client), patch.object(module, 'connected', return_value=['synthetic']), \
+                patch.object(module.threading, 'Thread') as thread:
+            sessions = module.Sessions(); lock = threading.Lock()
+            first = sessions.start({**base, 'request_id': request_id, 'test_account': {'email': 'prompt.user@example.com', 'password': 'Prompt-789'}}, lock)
+            # Credentials are not part of the request identity: the same start without them is the same session.
+            again = sessions.start({**base, 'request_id': request_id}, lock)
+            self.assertEqual(first['session_id'], again['session_id'])
+            saved = next(Path(folder).glob('*.json')).read_text()
+            self.assertNotIn('prompt.user@example.com', saved); self.assertNotIn('Prompt-789', saved)
+            self.assertNotIn('prompt.user@example.com', json.dumps(first))
+            self.assertEqual(first['account_source'], 'prompt')
+            session = sessions.items[first['session_id']]
+            started = []
+            with patch.object(module.dashboard_jobs, 'start', side_effect=lambda payload, _lock: started.append(payload) or (_ for _ in ()).throw(ValueError('stop here'))):
+                try:sessions.worker(session, [case], client, 'current', 40, False, lock)
+                except Exception:pass
+            self.assertEqual(started[0]['_account'], ('prompt.user@example.com', 'Prompt-789'))
+            thread.assert_called_once()
+
+    def test_dashboard_job_requests_cannot_inject_an_account(self):
+        import threading, uuid
+        from scout_mobile import dashboard_jobs
+        case = {'id': str(uuid.uuid4()), 'revision': 1, 'goal': 'Log in', 'steps': 'Log in', 'expected': 'Home', 'app_id': PACKAGE, 'platform': 'Android'}
+        # A JSON request can only produce a list, never the in-process tuple a saved-library session hands over.
+        with patch.object(dashboard_jobs, 'connected', return_value=['synthetic']):
+            with self.assertRaisesRegex(ValueError, 'Invalid run account'):
+                dashboard_jobs.start({'case': case, 'serial': 'synthetic', 'conditions_confirmed': True, '_account': ['a@example.com', 'x']}, threading.Lock())
 
 
 class ConsentPatternTests(unittest.TestCase):

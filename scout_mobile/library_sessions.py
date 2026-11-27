@@ -15,6 +15,7 @@ from . import dashboard_jobs
 from .devices import connected
 from .execution_contract import check_support, validate_authorizations
 from .starting_conditions import validate_account_username
+from .validation import validate_prompt_account
 from .capabilities import capabilities, negotiate_case
 
 STORE = ROOT/'runner-output'/'.library-sessions'
@@ -49,6 +50,10 @@ class Sessions:
         request_id=packet.get('request_id')
         if not isinstance(request_id,str):raise ValueError('A UUID request_id is required for safe start retries.')
         session_id='session-'+uuid.UUID(request_id).hex
+        # A prompt-supplied account is used for this run only: never fingerprinted, persisted or reported.
+        account=packet.pop('test_account',None)
+        if account is not None and not isinstance(account,dict):raise ValueError('test_account must be an object.')
+        email,password=validate_prompt_account((account or {}).get('email',''),(account or {}).get('password',''))
         signature=hashlib.sha256(json.dumps(packet,sort_keys=True).encode()).hexdigest()
         existing=self.snapshot(session_id)
         if existing:
@@ -116,7 +121,8 @@ class Sessions:
                      'total_cases':len(cases),'current_case_index':0,'active_run_id':None,'outcomes':[],
                      'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,'authorizations':grants,'account_username':account_username,
                      'continue_on_failure':packet.get('continue_on_failure',False) if matrix else False,
-                     'skipped_case_ids':[],'skipped_entry_ids':[],'_stop':threading.Event(),'_client':client}
+                     'skipped_case_ids':[],'skipped_entry_ids':[],'account_source':'prompt' if email else 'local',
+                     '_stop':threading.Event(),'_client':client,'_account':(email,password) if email else None}
             if matrix:session.update(matrix_id=matrix_id,matrix_revision=matrix['matrix_revision'],matrix_name=matrix['matrix_name'])
             with self.lock:
                 for key in list(self.items):
@@ -142,7 +148,8 @@ class Sessions:
                         break
                     run_id=dashboard_jobs.start({'case':case,'serial':session['serial'],'start_mode':mode,
                                                 'max_steps':limit,'allow_consent':consent,'conditions_confirmed':True,
-                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium'),'authorizations':session.get('authorizations',{}).get(case['id']),'account_username':session.get('account_username','')},threading.Lock())
+                                                'retain_saved_case':True,'client_capabilities':capabilities(case['platform'],getenv('SCOUT_ANDROID_DRIVER') or 'appium'),'authorizations':session.get('authorizations',{}).get(case['id']),'account_username':session.get('account_username',''),
+                                                '_account':session.get('_account')},threading.Lock())
                     session.update(current_case_index=index,active_run_id=run_id)
                     self.persist(session)
                 self.publish_matrix(session,client)

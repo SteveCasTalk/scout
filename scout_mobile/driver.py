@@ -26,17 +26,19 @@ from threading import Lock, RLock
 from typing import Any
 
 from .agent import Agent, RunConfig
-from .config import ROOT
+from .config import ROOT, named_account
 from .device import DeviceError, Element, Screen, TargetCovered
 from .execution_runtime import ExecutionBlocked, check_text_entry
 from .model import is_credential_field
 from .safety import (CONSENT_GATE, CONSENT_WORD, CREDENTIAL_MANAGER, GUARD_TEXT, PRIVATE_CODE_FIELD, RISKY, SWIPE_INSTRUCTION,
                      known_credential_prompt)
 from .skill_import import draft_path
+from .validation import validate_prompt_account
 
 SCHEMA_VERSION = 1
 REF = re.compile(r'^@(s[0-9a-f]{10}):e([1-9]\d{0,3})$')
 PACKAGE = re.compile(r'^[A-Za-z0-9_.-]{3,240}$')
+ACCOUNT_NAME = re.compile(r'^[a-z0-9_]{1,30}$')
 SETTLE_SECONDS = {'TAP': 4.0, 'TYPE_TEXT': 4.0, 'CLEAR_TEXT': 2.0, 'BACK': 4.0, 'SWIPE': 1.5}
 MAX_SNAPSHOTS = 16
 FOCUS_SETTLE_SECONDS = 2.5
@@ -45,6 +47,7 @@ IDLE_SECONDS = 15 * 60
 TEXT_LIMIT = 4000
 # Billing and credential surfaces stay outside every session, whatever the host declares.
 NEVER_ALLOWED = frozenset({'com.android.vending', CREDENTIAL_MANAGER, 'com.google.android.gms'})
+SYSTEM_UI = 'com.android.systemui:'
 DENY_LABEL = re.compile(r"(?:don[’']t allow|do not allow|deny|cancel|not now|later|許可しない|キャンセル)", re.I)
 
 
@@ -93,7 +96,7 @@ class Snapshot:
 class DriverSession:
     def __init__(self, platform: str, package: str, serial: str, adb: str = 'adb', title: str = '',
                  allow_consent: bool = False, appium_url: str = '', allowed_packages: list[str] | None = None,
-                 project: str = 'General', ticket_key: str = ''):
+                 project: str = 'General', ticket_key: str = '', account: str = '', test_email: str = '', test_password: str = ''):
         if platform not in {'Android', 'iOS'}:raise DriverError('INVALID_ARGS', 'Platform must be Android or iOS.', retry='never')
         if not PACKAGE.fullmatch(package or ''):raise DriverError('INVALID_ARGS', 'package must be a valid app package or bundle ID.', retry='never')
         extra = list(dict.fromkeys(item.strip() for item in (allowed_packages or [])))
@@ -102,6 +105,22 @@ class DriverSession:
         if any(item in NEVER_ALLOWED for item in extra):
             raise DriverError('INVALID_ARGS', 'Store checkout and credential managers can never be allowed packages.', retry='never')
         self.allowed_packages = extra
+        # The account comes from the prompt (this session only), a named local account, or the default
+        # SCOUT_TEST_EMAIL / SCOUT_TEST_PASSWORD, in that order. It is typed only through credential=email|password.
+        try:email, password = validate_prompt_account(test_email, test_password)
+        except ValueError as exc:raise DriverError('INVALID_ARGS', str(exc), retry='never') from None
+        if email and account:
+            raise DriverError('INVALID_ARGS', 'Give either an account from the prompt or a named local account, not both.', retry='never')
+        self.account_source = 'prompt' if email else ''
+        if account:
+            if not ACCOUNT_NAME.fullmatch(account):
+                raise DriverError('INVALID_ARGS', 'account is a lowercase name such as qa_owner (letters, digits, underscores).', retry='never')
+            email, password = named_account(account)
+            if not email or not password:
+                raise DriverError('ACCOUNT_NOT_CONFIGURED', f'Account "{account}" is not in the local provider.',
+                                  f'Ask the user to add SCOUT_ACCOUNT_{account.upper()}_EMAIL and _PASSWORD to .env.', retry='never')
+        self.account = account
+        if account:self.account_source = 'local named account'
         project, ticket_key = (project or 'General').strip(), (ticket_key or '').strip().upper()
         if not 1 <= len(project) <= 100 or len(ticket_key) > 40:
             raise DriverError('INVALID_ARGS', 'project must be 1–100 characters and ticket_key at most 40.', retry='never')
@@ -113,7 +132,8 @@ class DriverSession:
                 'goal': 'Host-driven exploration; actions were chosen by the MCP host agent, not by Scout.',
                 'preconditions': ('Allowed packages for this session: ' + ', '.join(extra)) if extra else ''}
         self.agent = Agent(RunConfig(package=package, serial=serial, test_case=case, output=output, adb=adb,
-                                     platform=platform, allow_consent=allow_consent, mcp_host_text=True, appium_url=appium_url))
+                                     platform=platform, allow_consent=allow_consent, mcp_host_text=True, appium_url=appium_url,
+                                     test_email=email, test_password=password))
         self.device = self.agent.device
         self.snapshots: dict[str, Snapshot] = {}
         self.typed_texts: list[str] = []
@@ -219,6 +239,9 @@ class DriverSession:
         return data
 
     def _in_app(self, foreground: str, screen: Screen) -> bool:
+        # Android reports the app as foreground while the lock screen or notification shade covers it; their controls
+        # carry System UI resource IDs. Never treat that as the app: its PIN field would accept a credential.
+        if self.platform == 'Android' and any(e.resource_id.startswith(SYSTEM_UI) for e in screen.elements):return False
         if foreground and foreground in self.allowed_packages:return True
         if self.platform == 'iOS':return bool(self.device.permits_foreground(foreground, screen))
         return foreground == self.package
@@ -240,7 +263,9 @@ class DriverSession:
 
     def _require_in_app(self, screen: Screen, foreground: str) -> None:
         if not self._in_app(foreground, screen):
-            raise DriverError('APP_BOUNDARY', f'The foreground app is {foreground or "unknown"}, not {self.package}; driver mode acts only inside the target app.',
+            covered = self.platform == 'Android' and any(e.resource_id.startswith(SYSTEM_UI) for e in screen.elements)
+            where = 'Android System UI (lock screen or notification shade) covers the app' if covered else f'The foreground app is {foreground or "unknown"}, not {self.package}'
+            raise DriverError('APP_BOUNDARY', f'{where}; driver mode acts only inside the target app.',
                               'Use mobile_back to return, or end the session and start one whose allowed_packages declares this app if the user approves acting in it.',
                               snapshot=self._snapshot_data(self._take(screen, foreground)))
 
@@ -286,6 +311,9 @@ class DriverSession:
         """The run pipeline's locked guards, applied to one host-chosen action."""
         agent = self.agent
         label = element.label
+        if element.resource_id.startswith(SYSTEM_UI):
+            raise DriverError('APP_BOUNDARY', 'That control belongs to Android System UI (lock screen or notification shade), not the app.',
+                              'Ask the user to unlock the device or close the shade, then take a new snapshot.', retry='after_user_action')
         if operation == 'TAP' and SWIPE_INSTRUCTION.search(screen.text):
             raise DriverError('SWIPE_INSTRUCTION', 'A swipe-up instruction is visible; the controls behind it may be covered.', 'Swipe up first (mobile_swipe direction=up).')
         if self.platform == 'iOS' and not agent.config.allow_consent and self.device.has_alert(screen) and not DENY_LABEL.fullmatch(label.strip()):
@@ -519,11 +547,12 @@ def _expire() -> None:
 
 
 def start(platform: str, package: str, serial: str, adb: str = 'adb', title: str = '', allow_consent: bool = False, launch: bool = True,
-          allowed_packages: list[str] | None = None, project: str = 'General', ticket_key: str = '') -> dict[str, Any]:
+          allowed_packages: list[str] | None = None, project: str = 'General', ticket_key: str = '', account: str = '',
+          test_email: str = '', test_password: str = '') -> dict[str, Any]:
     _expire()
     try:
         session = DriverSession(platform, package, serial, adb, title, allow_consent, allowed_packages=allowed_packages,
-                                project=project, ticket_key=ticket_key)
+                                project=project, ticket_key=ticket_key, account=account, test_email=test_email, test_password=test_password)
         snapshot = session.start(launch)
     except DriverError as exc:
         return exc.envelope('session_start')
@@ -531,7 +560,8 @@ def start(platform: str, package: str, serial: str, adb: str = 'adb', title: str
         return DriverError('DEVICE_ERROR', str(exc)[:500], 'Check the device and Appium setup (docs/appium-trial.md, docs/ios-appium.md).', retry='never').envelope('session_start')
     with _REGISTRY:_SESSIONS[session.id] = session
     return ok('session_start', {'session_id': session.id, 'run_id': session.run_id, 'platform': platform, 'package': package, 'device': serial,
-                                'allow_consent': allow_consent, 'allowed_packages': session.allowed_packages, 'snapshot': snapshot})
+                                'allow_consent': allow_consent, 'allowed_packages': session.allowed_packages, 'account': session.account or ('from prompt' if session.account_source == 'prompt' else 'default'),
+                                'snapshot': snapshot})
 
 
 def call(session_id: str, command: str, method: str, *args: Any, **kwargs: Any) -> dict[str, Any]:

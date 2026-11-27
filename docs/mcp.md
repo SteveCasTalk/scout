@@ -301,8 +301,17 @@ pipeline. Each guard has its own error code:
 | Credential field or private code | `CREDENTIAL_FIELD` |
 
 Rules for credentials and app boundaries:
-- Credentials are typed only with `credential="email"` or `credential="password"`. Scout reads
-  `SCOUT_TEST_EMAIL` or `SCOUT_TEST_PASSWORD` from `.env`; the value never passes through the host.
+- Credentials are typed only with `credential="email"` or `credential="password"`, never as
+  `text`. The account comes from one of three places, in this order:
+  1. an account the user gave in the prompt, passed as `test_email` and `test_password` on
+     `mobile_session_start` (kept in this session's memory only);
+  2. a named local account, `account="<name>"`, read from `SCOUT_ACCOUNT_<NAME>_EMAIL` and
+     `SCOUT_ACCOUNT_<NAME>_PASSWORD` in `.env`;
+  3. the default `SCOUT_TEST_EMAIL` and `SCOUT_TEST_PASSWORD` in `.env`.
+- Credential values are redacted from snapshots, traces and evidence. Screens with credential
+  fields or values are not captured.
+- Android System UI (lock screen, notification shade) counts as outside the app, even when the
+  app is still reported as the foreground app. Its controls are refused with `APP_BOUNDARY`.
 - `mobile_back` is the one action allowed while another app is in front.
 - `allowed_packages` declares up to five other apps the user approved acting in, such as a helper package the
   app opens for search. Store checkout, Google Play services and credential managers can never be allowed.
@@ -616,3 +625,18 @@ separately; compact legacy traces remain readable. Original results and human
 reviews are not rewritten. Public evidence now also includes sandbox/execution
 reports, recordings and declared media sources; cleanup journals and private
 snapshots remain excluded.
+
+## Accounts given in the prompt
+
+When the user gives an account in the prompt ("log in as …"), pass it as `test_email` and
+`test_password` to `run_test_case`, `run_test_suite`, `run_mobile_test`,
+`run_mobile_test_from_prompt` or `mobile_session_start`. It replaces the local `.env` account
+for that one run.
+
+- It is kept in runner memory only: never in the case, the saved-library session file, its
+  request signature, the dashboard or the evidence.
+- It is typed only by the local runner, and redacted from everything a run saves.
+- Tool arguments are still visible to the MCP host and client, so `.env` is the more private
+  option for accounts used often.
+- `account_username` is separate: the visible username a run verifies after login. Never put
+  an email or password in it.
